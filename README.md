@@ -4,6 +4,9 @@ vperfetto is a way to make it easier to process perfetto traces in the virtual m
 
 # Build
 
+    # protobuf is required. On debian buster, do this to install it.
+    # sudo apt-get install libprotoc-dev protobuf-compiler
+
     mkdir build
     cd build
     cmake . ../
