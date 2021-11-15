@@ -18,13 +18,1635 @@
 #if !defined(PERFETTO_IMPLEMENTATION)
 #define PERFETTO_IMPLEMENTATION
 #endif
-#if !defined(GOOGLE_PROTOBUF_NO_RTTI)
-#define GOOGLE_PROTOBUF_NO_RTTI
-#endif
 #if !defined(GOOGLE_PROTOBUF_NO_STATIC_INITIALIZER)
 #define GOOGLE_PROTOBUF_NO_STATIC_INITIALIZER
 #endif
+#if !defined(GOOGLE_PROTOBUF_NO_RTTI)
+#define GOOGLE_PROTOBUF_NO_RTTI
+#endif
 #include "perfetto.h"
+// gen_amalgamated begin source: src/base/crash_keys.cc
+// gen_amalgamated begin header: include/perfetto/ext/base/crash_keys.h
+// gen_amalgamated begin header: include/perfetto/ext/base/string_view.h
+// gen_amalgamated begin header: include/perfetto/ext/base/hash.h
+/*
+ * Copyright (C) 2019 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef INCLUDE_PERFETTO_EXT_BASE_HASH_H_
+#define INCLUDE_PERFETTO_EXT_BASE_HASH_H_
+
+#include <stddef.h>
+#include <stdint.h>
+#include <type_traits>
+
+namespace perfetto {
+namespace base {
+
+// A helper class which computes a 64-bit hash of the input data.
+// The algorithm used is FNV-1a as it is fast and easy to implement and has
+// relatively few collisions.
+// WARNING: This hash function should not be used for any cryptographic purpose.
+class Hash {
+ public:
+  // Creates an empty hash object
+  Hash() {}
+
+  // Hashes a numeric value.
+  template <
+      typename T,
+      typename std::enable_if<std::is_arithmetic<T>::value, bool>::type = true>
+  void Update(T data) {
+    Update(reinterpret_cast<const char*>(&data), sizeof(data));
+  }
+
+  // Hashes a byte array.
+  void Update(const char* data, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+      result_ ^= static_cast<uint8_t>(data[i]);
+      result_ *= kFnv1a64Prime;
+    }
+  }
+
+  uint64_t digest() { return result_; }
+
+ private:
+  static constexpr uint64_t kFnv1a64OffsetBasis = 0xcbf29ce484222325;
+  static constexpr uint64_t kFnv1a64Prime = 0x100000001b3;
+
+  uint64_t result_ = kFnv1a64OffsetBasis;
+};
+
+}  // namespace base
+}  // namespace perfetto
+
+#endif  // INCLUDE_PERFETTO_EXT_BASE_HASH_H_
+/*
+ * Copyright (C) 2018 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef INCLUDE_PERFETTO_EXT_BASE_STRING_VIEW_H_
+#define INCLUDE_PERFETTO_EXT_BASE_STRING_VIEW_H_
+
+#include <string.h>
+
+#include <algorithm>
+#include <string>
+
+// gen_amalgamated expanded: #include "perfetto/base/build_config.h"
+// gen_amalgamated expanded: #include "perfetto/base/logging.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/hash.h"
+
+namespace perfetto {
+namespace base {
+
+// A string-like object that refers to a non-owned piece of memory.
+// Strings are internally NOT null terminated.
+class StringView {
+ public:
+  static constexpr size_t npos = static_cast<size_t>(-1);
+
+  StringView() : data_(nullptr), size_(0) {}
+  StringView(const StringView&) = default;
+  StringView& operator=(const StringView&) = default;
+  StringView(const char* data, size_t size) : data_(data), size_(size) {
+    PERFETTO_DCHECK(size == 0 || data != nullptr);
+  }
+
+  // Allow implicit conversion from any class that has a |data| and |size| field
+  // and has the kConvertibleToStringView trait (e.g., protozero::ConstChars).
+  template <typename T, typename = std::enable_if<T::kConvertibleToStringView>>
+  StringView(const T& x) : StringView(x.data, x.size) {
+    PERFETTO_DCHECK(x.size == 0 || x.data != nullptr);
+  }
+
+  // Creates a StringView from a null-terminated C string.
+  // Deliberately not "explicit".
+  StringView(const char* cstr) : data_(cstr), size_(strlen(cstr)) {
+    PERFETTO_DCHECK(cstr != nullptr);
+  }
+
+  // This instead has to be explicit, as creating a StringView out of a
+  // std::string can be subtle.
+  explicit StringView(const std::string& str)
+      : data_(str.data()), size_(str.size()) {}
+
+  bool empty() const { return size_ == 0; }
+  size_t size() const { return size_; }
+  const char* data() const { return data_; }
+  const char* begin() const { return data_; }
+  const char* end() const { return data_ + size_; }
+
+  char at(size_t pos) const {
+    PERFETTO_DCHECK(pos < size_);
+    return data_[pos];
+  }
+
+  size_t find(char c, size_t start_pos = 0) const {
+    for (size_t i = start_pos; i < size_; ++i) {
+      if (data_[i] == c)
+        return i;
+    }
+    return npos;
+  }
+
+  size_t find(const StringView& str, size_t start_pos = 0) const {
+    if (start_pos > size())
+      return npos;
+    auto it = std::search(begin() + start_pos, end(), str.begin(), str.end());
+    size_t pos = static_cast<size_t>(it - begin());
+    return pos + str.size() <= size() ? pos : npos;
+  }
+
+  size_t find(const char* str, size_t start_pos = 0) const {
+    return find(StringView(str), start_pos);
+  }
+
+  size_t rfind(char c) const {
+    for (size_t i = size_; i > 0; --i) {
+      if (data_[i - 1] == c)
+        return i - 1;
+    }
+    return npos;
+  }
+
+  StringView substr(size_t pos, size_t count = npos) const {
+    if (pos >= size_)
+      return StringView("", 0);
+    size_t rcount = std::min(count, size_ - pos);
+    return StringView(data_ + pos, rcount);
+  }
+
+  bool CaseInsensitiveEq(const StringView& other) {
+    if (size() != other.size())
+      return false;
+    if (size() == 0)
+      return true;
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+    return _strnicmp(data(), other.data(), size()) == 0;
+#else
+    return strncasecmp(data(), other.data(), size()) == 0;
+#endif
+  }
+
+  bool StartsWith(const StringView& other) {
+    if (other.size() == 0)
+      return true;
+    if (size() == 0)
+      return false;
+    if (other.size() > size())
+      return false;
+    for (uint32_t i = 0; i < other.size(); ++i) {
+      if (at(i) != other.at(i))
+        return false;
+    }
+    return true;
+  }
+
+  std::string ToStdString() const {
+    return size_ == 0 ? "" : std::string(data_, size_);
+  }
+
+  uint64_t Hash() const {
+    base::Hash hasher;
+    hasher.Update(data_, size_);
+    return hasher.digest();
+  }
+
+ private:
+  const char* data_ = nullptr;
+  size_t size_ = 0;
+};
+
+inline bool operator==(const StringView& x, const StringView& y) {
+  if (x.size() != y.size())
+    return false;
+  if (x.size() == 0)
+    return true;
+  return memcmp(x.data(), y.data(), x.size()) == 0;
+}
+
+inline bool operator!=(const StringView& x, const StringView& y) {
+  return !(x == y);
+}
+
+inline bool operator<(const StringView& x, const StringView& y) {
+  auto size = std::min(x.size(), y.size());
+  if (size == 0)
+    return x.size() < y.size();
+  int result = memcmp(x.data(), y.data(), size);
+  return result < 0 || (result == 0 && x.size() < y.size());
+}
+
+inline bool operator>=(const StringView& x, const StringView& y) {
+  return !(x < y);
+}
+
+inline bool operator>(const StringView& x, const StringView& y) {
+  return y < x;
+}
+
+inline bool operator<=(const StringView& x, const StringView& y) {
+  return !(y < x);
+}
+
+}  // namespace base
+}  // namespace perfetto
+
+template <>
+struct std::hash<::perfetto::base::StringView> {
+  size_t operator()(const ::perfetto::base::StringView& sv) const {
+    return static_cast<size_t>(sv.Hash());
+  }
+};
+
+#endif  // INCLUDE_PERFETTO_EXT_BASE_STRING_VIEW_H_
+/*
+ * Copyright (C) 2021 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef INCLUDE_PERFETTO_EXT_BASE_CRASH_KEYS_H_
+#define INCLUDE_PERFETTO_EXT_BASE_CRASH_KEYS_H_
+
+#include <algorithm>
+#include <atomic>
+
+#include <stdint.h>
+#include <string.h>
+
+// gen_amalgamated expanded: #include "perfetto/base/compiler.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_view.h"
+
+// Crash keys are very simple global variables with static-storage that
+// are reported on crash time for managed crashes (CHECK/FATAL/Watchdog).
+// - Translation units can define a CrashKey and register it at some point
+//   during initialization.
+// - CrashKey instances must be long-lived. They should really be just global
+//   static variable in the anonymous namespace.
+// Example:
+// subsystem_1.cc
+//   CrashKey g_client_id("ipc_client_id");
+//   ...
+//   OnIpcReceived(client_id) {
+//      g_client_id.Set(client_id);
+//      ... // Process the IPC
+//      g_client_id.Clear();
+//   }
+//   Or equivalently:
+//   OnIpcReceived(client_id) {
+//      auto scoped_key = g_client_id.SetScoped(client_id);
+//      ... // Process the IPC
+//   }
+//
+// If a crash happens while processing the IPC, the crash report will
+// have a line "ipc_client_id: 42".
+//
+// Thread safety considerations:
+// CrashKeys can be registered and set/cleared from any thread.
+// There is no compelling use-case to have full acquire/release consistency when
+// setting a key. This means that if a thread crashes immediately after a
+// crash key has been set on another thread, the value printed on the crash
+// report could be incomplete. The code guarantees defined behavior and does
+// not rely on null-terminated string (in the worst case 32 bytes of random
+// garbage will be printed out).
+
+// The tests live in logging_unittest.cc.
+
+namespace perfetto {
+namespace base {
+
+constexpr size_t kCrashKeyMaxStrSize = 32;
+
+// CrashKey instances must be long lived
+class CrashKey {
+ public:
+  class ScopedClear {
+   public:
+    explicit ScopedClear(CrashKey* k) : key_(k) {}
+    ~ScopedClear() {
+      if (key_)
+        key_->Clear();
+    }
+    ScopedClear(const ScopedClear&) = delete;
+    ScopedClear& operator=(const ScopedClear&) = delete;
+    ScopedClear& operator=(ScopedClear&&) = delete;
+    ScopedClear(ScopedClear&& other) : key_(other.key_) {
+      other.key_ = nullptr;
+    }
+
+   private:
+    CrashKey* key_;
+  };
+
+  // constexpr so it can be used in the anon namespace without requiring a
+  // global constructor.
+  // |name| must be a long-lived string.
+  constexpr explicit CrashKey(const char* name)
+      : registered_{}, type_(Type::kUnset), name_(name), str_value_{} {}
+  CrashKey(const CrashKey&) = delete;
+  CrashKey& operator=(const CrashKey&) = delete;
+  CrashKey(CrashKey&&) = delete;
+  CrashKey& operator=(CrashKey&&) = delete;
+
+  enum class Type : uint8_t { kUnset = 0, kInt, kStr };
+
+  void Clear() {
+    int_value_ = 0;
+    type_ = Type::kUnset;
+  }
+
+  void Set(int64_t value) {
+    int_value_ = value;
+    type_ = Type::kInt;
+    if (PERFETTO_UNLIKELY(!registered_.load(std::memory_order_relaxed)))
+      Register();
+  }
+
+  void Set(StringView sv) {
+    size_t len = std::min(sv.size(), sizeof(str_value_) - 1);
+    memcpy(str_value_, sv.data(), len);
+    str_value_[len] = '\0';
+    type_ = Type::kStr;
+    if (PERFETTO_UNLIKELY(!registered_.load(std::memory_order_relaxed)))
+      Register();
+  }
+
+  ScopedClear SetScoped(int64_t value) PERFETTO_WARN_UNUSED_RESULT {
+    Set(value);
+    return ScopedClear(this);
+  }
+
+  ScopedClear SetScoped(StringView sv) PERFETTO_WARN_UNUSED_RESULT {
+    Set(sv);
+    return ScopedClear(this);
+  }
+
+  int64_t int_value() const { return int_value_; }
+  size_t ToString(char* dst, size_t len);
+
+ private:
+  void Register();
+
+  std::atomic<bool> registered_;
+  Type type_;
+  const char* const name_;
+  union {
+    char str_value_[kCrashKeyMaxStrSize];
+    int64_t int_value_;
+  };
+};
+
+// Fills |dst| with a string containing one line for each crash key
+// (excluding the unset ones).
+// Returns number of chars written, without counting the NUL terminator.
+// This is used in logging.cc when emitting the crash report abort message.
+size_t SerializeCrashKeys(char* dst, size_t len);
+
+void UnregisterAllCrashKeysForTesting();
+
+}  // namespace base
+}  // namespace perfetto
+
+#endif  // INCLUDE_PERFETTO_EXT_BASE_CRASH_KEYS_H_
+// gen_amalgamated begin header: include/perfetto/ext/base/string_utils.h
+// gen_amalgamated begin header: include/perfetto/ext/base/optional.h
+/*
+ * Copyright (C) 2018 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef INCLUDE_PERFETTO_EXT_BASE_OPTIONAL_H_
+#define INCLUDE_PERFETTO_EXT_BASE_OPTIONAL_H_
+
+#include <functional>
+#include <type_traits>
+#include <utility>
+
+// gen_amalgamated expanded: #include "perfetto/base/logging.h"
+
+namespace perfetto {
+namespace base {
+
+// Specification:
+// http://en.cppreference.com/w/cpp/utility/optional/in_place_t
+struct in_place_t {};
+
+// Specification:
+// http://en.cppreference.com/w/cpp/utility/optional/nullopt_t
+struct nullopt_t {
+  constexpr explicit nullopt_t(int) {}
+};
+
+// Specification:
+// http://en.cppreference.com/w/cpp/utility/optional/in_place
+constexpr in_place_t in_place = {};
+
+// Specification:
+// http://en.cppreference.com/w/cpp/utility/optional/nullopt
+constexpr nullopt_t nullopt(0);
+
+// Forward declaration, which is referred by following helpers.
+template <typename T>
+class Optional;
+
+namespace internal {
+
+template <typename T, bool = std::is_trivially_destructible<T>::value>
+struct OptionalStorageBase {
+  // Initializing |empty_| here instead of using default member initializing
+  // to avoid errors in g++ 4.8.
+  constexpr OptionalStorageBase() : empty_('\0') {}
+
+  template <class... Args>
+  constexpr explicit OptionalStorageBase(in_place_t, Args&&... args)
+      : is_populated_(true), value_(std::forward<Args>(args)...) {}
+
+  // When T is not trivially destructible we must call its
+  // destructor before deallocating its memory.
+  // Note that this hides the (implicitly declared) move constructor, which
+  // would be used for constexpr move constructor in OptionalStorage<T>.
+  // It is needed iff T is trivially move constructible. However, the current
+  // is_trivially_{copy,move}_constructible implementation requires
+  // is_trivially_destructible (which looks a bug, cf:
+  // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=51452 and
+  // http://cplusplus.github.io/LWG/lwg-active.html#2116), so it is not
+  // necessary for this case at the moment. Please see also the destructor
+  // comment in "is_trivially_destructible = true" specialization below.
+  ~OptionalStorageBase() {
+    if (is_populated_)
+      value_.~T();
+  }
+
+  template <class... Args>
+  void Init(Args&&... args) {
+    PERFETTO_DCHECK(!is_populated_);
+    ::new (&value_) T(std::forward<Args>(args)...);
+    is_populated_ = true;
+  }
+
+  bool is_populated_ = false;
+  union {
+    // |empty_| exists so that the union will always be initialized, even when
+    // it doesn't contain a value. Union members must be initialized for the
+    // constructor to be 'constexpr'.
+    char empty_;
+    T value_;
+  };
+};
+
+template <typename T>
+struct OptionalStorageBase<T, true /* trivially destructible */> {
+  // Initializing |empty_| here instead of using default member initializing
+  // to avoid errors in g++ 4.8.
+  constexpr OptionalStorageBase() : empty_('\0') {}
+
+  template <class... Args>
+  constexpr explicit OptionalStorageBase(in_place_t, Args&&... args)
+      : is_populated_(true), value_(std::forward<Args>(args)...) {}
+
+  // When T is trivially destructible (i.e. its destructor does nothing) there
+  // is no need to call it. Implicitly defined destructor is trivial, because
+  // both members (bool and union containing only variants which are trivially
+  // destructible) are trivially destructible.
+  // Explicitly-defaulted destructor is also trivial, but do not use it here,
+  // because it hides the implicit move constructor. It is needed to implement
+  // constexpr move constructor in OptionalStorage iff T is trivially move
+  // constructible. Note that, if T is trivially move constructible, the move
+  // constructor of OptionalStorageBase<T> is also implicitly defined and it is
+  // trivially move constructor. If T is not trivially move constructible,
+  // "not declaring move constructor without destructor declaration" here means
+  // "delete move constructor", which works because any move constructor of
+  // OptionalStorage will not refer to it in that case.
+
+  template <class... Args>
+  void Init(Args&&... args) {
+    PERFETTO_DCHECK(!is_populated_);
+    ::new (&value_) T(std::forward<Args>(args)...);
+    is_populated_ = true;
+  }
+
+  bool is_populated_ = false;
+  union {
+    // |empty_| exists so that the union will always be initialized, even when
+    // it doesn't contain a value. Union members must be initialized for the
+    // constructor to be 'constexpr'.
+    char empty_;
+    T value_;
+  };
+};
+
+// Implement conditional constexpr copy and move constructors. These are
+// constexpr if is_trivially_{copy,move}_constructible<T>::value is true
+// respectively. If each is true, the corresponding constructor is defined as
+// "= default;", which generates a constexpr constructor (In this case,
+// the condition of constexpr-ness is satisfied because the base class also has
+// compiler generated constexpr {copy,move} constructors). Note that
+// placement-new is prohibited in constexpr.
+template <typename T, bool = std::is_trivially_copy_constructible<T>::value>
+struct OptionalStorage : OptionalStorageBase<T> {
+  // This is no trivially {copy,move} constructible case. Other cases are
+  // defined below as specializations.
+
+  // Accessing the members of template base class requires explicit
+  // declaration.
+  using OptionalStorageBase<T>::is_populated_;
+  using OptionalStorageBase<T>::value_;
+  using OptionalStorageBase<T>::Init;
+
+  // Inherit constructors (specifically, the in_place constructor).
+  using OptionalStorageBase<T>::OptionalStorageBase;
+
+  // User defined constructor deletes the default constructor.
+  // Define it explicitly.
+  OptionalStorage() = default;
+
+  OptionalStorage(const OptionalStorage& other) : OptionalStorageBase<T>() {
+    if (other.is_populated_)
+      Init(other.value_);
+  }
+
+  OptionalStorage(OptionalStorage&& other) noexcept(
+      std::is_nothrow_move_constructible<T>::value) {
+    if (other.is_populated_)
+      Init(std::move(other.value_));
+  }
+};
+
+template <typename T>
+struct OptionalStorage<T, true /* trivially copy constructible */>
+    : OptionalStorageBase<T> {
+  using OptionalStorageBase<T>::is_populated_;
+  using OptionalStorageBase<T>::value_;
+  using OptionalStorageBase<T>::Init;
+  using OptionalStorageBase<T>::OptionalStorageBase;
+
+  OptionalStorage() = default;
+  OptionalStorage(const OptionalStorage& other) = default;
+
+  OptionalStorage(OptionalStorage&& other) noexcept(
+      std::is_nothrow_move_constructible<T>::value) {
+    if (other.is_populated_)
+      Init(std::move(other.value_));
+  }
+};
+
+// Base class to support conditionally usable copy-/move- constructors
+// and assign operators.
+template <typename T>
+class OptionalBase {
+  // This class provides implementation rather than public API, so everything
+  // should be hidden. Often we use composition, but we cannot in this case
+  // because of C++ language restriction.
+ protected:
+  constexpr OptionalBase() = default;
+  constexpr OptionalBase(const OptionalBase& other) = default;
+  constexpr OptionalBase(OptionalBase&& other) = default;
+
+  template <class... Args>
+  constexpr explicit OptionalBase(in_place_t, Args&&... args)
+      : storage_(in_place, std::forward<Args>(args)...) {}
+
+  // Implementation of converting constructors.
+  template <typename U>
+  explicit OptionalBase(const OptionalBase<U>& other) {
+    if (other.storage_.is_populated_)
+      storage_.Init(other.storage_.value_);
+  }
+
+  template <typename U>
+  explicit OptionalBase(OptionalBase<U>&& other) {
+    if (other.storage_.is_populated_)
+      storage_.Init(std::move(other.storage_.value_));
+  }
+
+  ~OptionalBase() = default;
+
+  OptionalBase& operator=(const OptionalBase& other) {
+    CopyAssign(other);
+    return *this;
+  }
+
+  OptionalBase& operator=(OptionalBase&& other) noexcept(
+      std::is_nothrow_move_assignable<T>::value&&
+          std::is_nothrow_move_constructible<T>::value) {
+    MoveAssign(std::move(other));
+    return *this;
+  }
+
+  template <typename U>
+  void CopyAssign(const OptionalBase<U>& other) {
+    if (other.storage_.is_populated_)
+      InitOrAssign(other.storage_.value_);
+    else
+      FreeIfNeeded();
+  }
+
+  template <typename U>
+  void MoveAssign(OptionalBase<U>&& other) {
+    if (other.storage_.is_populated_)
+      InitOrAssign(std::move(other.storage_.value_));
+    else
+      FreeIfNeeded();
+  }
+
+  template <typename U>
+  void InitOrAssign(U&& value) {
+    if (storage_.is_populated_)
+      storage_.value_ = std::forward<U>(value);
+    else
+      storage_.Init(std::forward<U>(value));
+  }
+
+  void FreeIfNeeded() {
+    if (!storage_.is_populated_)
+      return;
+    storage_.value_.~T();
+    storage_.is_populated_ = false;
+  }
+
+  // For implementing conversion, allow access to other typed OptionalBase
+  // class.
+  template <typename U>
+  friend class OptionalBase;
+
+  OptionalStorage<T> storage_;
+};
+
+// The following {Copy,Move}{Constructible,Assignable} structs are helpers to
+// implement constructor/assign-operator overloading. Specifically, if T is
+// is not movable but copyable, Optional<T>'s move constructor should not
+// participate in overload resolution. This inheritance trick implements that.
+template <bool is_copy_constructible>
+struct CopyConstructible {};
+
+template <>
+struct CopyConstructible<false> {
+  constexpr CopyConstructible() = default;
+  constexpr CopyConstructible(const CopyConstructible&) = delete;
+  constexpr CopyConstructible(CopyConstructible&&) = default;
+  CopyConstructible& operator=(const CopyConstructible&) = default;
+  CopyConstructible& operator=(CopyConstructible&&) = default;
+};
+
+template <bool is_move_constructible>
+struct MoveConstructible {};
+
+template <>
+struct MoveConstructible<false> {
+  constexpr MoveConstructible() = default;
+  constexpr MoveConstructible(const MoveConstructible&) = default;
+  constexpr MoveConstructible(MoveConstructible&&) = delete;
+  MoveConstructible& operator=(const MoveConstructible&) = default;
+  MoveConstructible& operator=(MoveConstructible&&) = default;
+};
+
+template <bool is_copy_assignable>
+struct CopyAssignable {};
+
+template <>
+struct CopyAssignable<false> {
+  constexpr CopyAssignable() = default;
+  constexpr CopyAssignable(const CopyAssignable&) = default;
+  constexpr CopyAssignable(CopyAssignable&&) = default;
+  CopyAssignable& operator=(const CopyAssignable&) = delete;
+  CopyAssignable& operator=(CopyAssignable&&) = default;
+};
+
+template <bool is_move_assignable>
+struct MoveAssignable {};
+
+template <>
+struct MoveAssignable<false> {
+  constexpr MoveAssignable() = default;
+  constexpr MoveAssignable(const MoveAssignable&) = default;
+  constexpr MoveAssignable(MoveAssignable&&) = default;
+  MoveAssignable& operator=(const MoveAssignable&) = default;
+  MoveAssignable& operator=(MoveAssignable&&) = delete;
+};
+
+// Helper to conditionally enable converting constructors and assign operators.
+template <typename T, typename U>
+struct IsConvertibleFromOptional
+    : std::integral_constant<
+          bool,
+          std::is_constructible<T, Optional<U>&>::value ||
+              std::is_constructible<T, const Optional<U>&>::value ||
+              std::is_constructible<T, Optional<U>&&>::value ||
+              std::is_constructible<T, const Optional<U>&&>::value ||
+              std::is_convertible<Optional<U>&, T>::value ||
+              std::is_convertible<const Optional<U>&, T>::value ||
+              std::is_convertible<Optional<U>&&, T>::value ||
+              std::is_convertible<const Optional<U>&&, T>::value> {};
+
+template <typename T, typename U>
+struct IsAssignableFromOptional
+    : std::integral_constant<
+          bool,
+          IsConvertibleFromOptional<T, U>::value ||
+              std::is_assignable<T&, Optional<U>&>::value ||
+              std::is_assignable<T&, const Optional<U>&>::value ||
+              std::is_assignable<T&, Optional<U>&&>::value ||
+              std::is_assignable<T&, const Optional<U>&&>::value> {};
+
+// Forward compatibility for C++17.
+// Introduce one more deeper nested namespace to avoid leaking using std::swap.
+namespace swappable_impl {
+using std::swap;
+
+struct IsSwappableImpl {
+  // Tests if swap can be called. Check<T&>(0) returns true_type iff swap is
+  // available for T. Otherwise, Check's overload resolution falls back to
+  // Check(...) declared below thanks to SFINAE, so returns false_type.
+  template <typename T>
+  static auto Check(int)
+      -> decltype(swap(std::declval<T>(), std::declval<T>()), std::true_type());
+
+  template <typename T>
+  static std::false_type Check(...);
+};
+}  // namespace swappable_impl
+
+template <typename T>
+struct IsSwappable : decltype(swappable_impl::IsSwappableImpl::Check<T&>(0)) {};
+
+// Forward compatibility for C++20.
+template <typename T>
+using RemoveCvRefT =
+    typename std::remove_cv<typename std::remove_reference<T>::type>::type;
+
+}  // namespace internal
+
+// On Windows, by default, empty-base class optimization does not work,
+// which means even if the base class is empty struct, it still consumes one
+// byte for its body. __declspec(empty_bases) enables the optimization.
+// cf)
+// https://blogs.msdn.microsoft.com/vcblog/2016/03/30/optimizing-the-layout-of-empty-base-classes-in-vs2015-update-2-3/
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
+    !PERFETTO_BUILDFLAG(PERFETTO_COMPILER_GCC)
+#define OPTIONAL_DECLSPEC_EMPTY_BASES __declspec(empty_bases)
+#else
+#define OPTIONAL_DECLSPEC_EMPTY_BASES
+#endif
+
+// base::Optional is a Chromium version of the C++17 optional class:
+// std::optional documentation:
+// http://en.cppreference.com/w/cpp/utility/optional
+// Chromium documentation:
+// https://chromium.googlesource.com/chromium/src/+/master/docs/optional.md
+//
+// These are the differences between the specification and the implementation:
+// - Constructors do not use 'constexpr' as it is a C++14 extension.
+// - 'constexpr' might be missing in some places for reasons specified locally.
+// - No exceptions are thrown, because they are banned from Chromium.
+//   Marked noexcept for only move constructor and move assign operators.
+// - All the non-members are in the 'base' namespace instead of 'std'.
+//
+// Note that T cannot have a constructor T(Optional<T>) etc. Optional<T>
+// PERFETTO_CHECKs T's constructor (specifically via IsConvertibleFromOptional),
+// and in the PERFETTO_CHECK whether T can be constructible from Optional<T>,
+// which is recursive so it does not work. As of Feb 2018, std::optional C++17
+// implementation in both clang and gcc has same limitation. MSVC SFINAE looks
+// to have different behavior, but anyway it reports an error, too.
+//
+// This file is a modified version of optional.h from Chromium at revision
+// 5e71bd454e60511c1293c0c686544aaa76094424. The changes remove C++14/C++17
+// specific code and replace with C++11 counterparts.
+template <typename T>
+class OPTIONAL_DECLSPEC_EMPTY_BASES Optional
+    : public internal::OptionalBase<T>,
+      public internal::CopyConstructible<std::is_copy_constructible<T>::value>,
+      public internal::MoveConstructible<std::is_move_constructible<T>::value>,
+      public internal::CopyAssignable<std::is_copy_constructible<T>::value &&
+                                      std::is_copy_assignable<T>::value>,
+      public internal::MoveAssignable<std::is_move_constructible<T>::value &&
+                                      std::is_move_assignable<T>::value> {
+ public:
+#undef OPTIONAL_DECLSPEC_EMPTY_BASES
+  using value_type = T;
+
+  // Defer default/copy/move constructor implementation to OptionalBase.
+  constexpr Optional() = default;
+  constexpr Optional(const Optional& other) = default;
+  constexpr Optional(Optional&& other) noexcept(
+      std::is_nothrow_move_constructible<T>::value) = default;
+
+  constexpr Optional(nullopt_t) {}  // NOLINT(runtime/explicit)
+
+  // Converting copy constructor. "explicit" only if
+  // std::is_convertible<const U&, T>::value is false. It is implemented by
+  // declaring two almost same constructors, but that condition in enable_if_t
+  // is different, so that either one is chosen, thanks to SFINAE.
+  template <typename U,
+            typename std::enable_if<
+                std::is_constructible<T, const U&>::value &&
+                    !internal::IsConvertibleFromOptional<T, U>::value &&
+                    std::is_convertible<const U&, T>::value,
+                bool>::type = false>
+  Optional(const Optional<U>& other) : internal::OptionalBase<T>(other) {}
+
+  template <typename U,
+            typename std::enable_if<
+                std::is_constructible<T, const U&>::value &&
+                    !internal::IsConvertibleFromOptional<T, U>::value &&
+                    !std::is_convertible<const U&, T>::value,
+                bool>::type = false>
+  explicit Optional(const Optional<U>& other)
+      : internal::OptionalBase<T>(other) {}
+
+  // Converting move constructor. Similar to converting copy constructor,
+  // declaring two (explicit and non-explicit) constructors.
+  template <typename U,
+            typename std::enable_if<
+                std::is_constructible<T, U&&>::value &&
+                    !internal::IsConvertibleFromOptional<T, U>::value &&
+                    std::is_convertible<U&&, T>::value,
+                bool>::type = false>
+  Optional(Optional<U>&& other) : internal::OptionalBase<T>(std::move(other)) {}
+
+  template <typename U,
+            typename std::enable_if<
+                std::is_constructible<T, U&&>::value &&
+                    !internal::IsConvertibleFromOptional<T, U>::value &&
+                    !std::is_convertible<U&&, T>::value,
+                bool>::type = false>
+  explicit Optional(Optional<U>&& other)
+      : internal::OptionalBase<T>(std::move(other)) {}
+
+  template <class... Args>
+  constexpr explicit Optional(in_place_t, Args&&... args)
+      : internal::OptionalBase<T>(in_place, std::forward<Args>(args)...) {}
+
+  template <class U,
+            class... Args,
+            class = typename std::enable_if<
+                std::is_constructible<value_type,
+                                      std::initializer_list<U>&,
+                                      Args...>::value>::type>
+  constexpr explicit Optional(in_place_t,
+                              std::initializer_list<U> il,
+                              Args&&... args)
+      : internal::OptionalBase<T>(in_place, il, std::forward<Args>(args)...) {}
+
+  // Forward value constructor. Similar to converting constructors,
+  // conditionally explicit.
+  template <
+      typename U = value_type,
+      typename std::enable_if<
+          std::is_constructible<T, U&&>::value &&
+              !std::is_same<internal::RemoveCvRefT<U>, in_place_t>::value &&
+              !std::is_same<internal::RemoveCvRefT<U>, Optional<T>>::value &&
+              std::is_convertible<U&&, T>::value,
+          bool>::type = false>
+  constexpr Optional(U&& value)
+      : internal::OptionalBase<T>(in_place, std::forward<U>(value)) {}
+
+  template <
+      typename U = value_type,
+      typename std::enable_if<
+          std::is_constructible<T, U&&>::value &&
+              !std::is_same<internal::RemoveCvRefT<U>, in_place_t>::value &&
+              !std::is_same<internal::RemoveCvRefT<U>, Optional<T>>::value &&
+              !std::is_convertible<U&&, T>::value,
+          bool>::type = false>
+  constexpr explicit Optional(U&& value)
+      : internal::OptionalBase<T>(in_place, std::forward<U>(value)) {}
+
+  ~Optional() = default;
+
+  // Defer copy-/move- assign operator implementation to OptionalBase.
+  Optional& operator=(const Optional& other) = default;
+  Optional& operator=(Optional&& other) noexcept(
+      std::is_nothrow_move_assignable<T>::value&&
+          std::is_nothrow_move_constructible<T>::value) = default;
+
+  Optional& operator=(nullopt_t) {
+    FreeIfNeeded();
+    return *this;
+  }
+
+  // Perfect-forwarded assignment.
+  template <typename U>
+  typename std::enable_if<
+      !std::is_same<internal::RemoveCvRefT<U>, Optional<T>>::value &&
+          std::is_constructible<T, U>::value &&
+          std::is_assignable<T&, U>::value &&
+          (!std::is_scalar<T>::value ||
+           !std::is_same<typename std::decay<U>::type, T>::value),
+      Optional&>::type
+  operator=(U&& value) {
+    InitOrAssign(std::forward<U>(value));
+    return *this;
+  }
+
+  // Copy assign the state of other.
+  template <typename U>
+  typename std::enable_if<!internal::IsAssignableFromOptional<T, U>::value &&
+                              std::is_constructible<T, const U&>::value &&
+                              std::is_assignable<T&, const U&>::value,
+                          Optional&>::type
+  operator=(const Optional<U>& other) {
+    CopyAssign(other);
+    return *this;
+  }
+
+  // Move assign the state of other.
+  template <typename U>
+  typename std::enable_if<!internal::IsAssignableFromOptional<T, U>::value &&
+                              std::is_constructible<T, U>::value &&
+                              std::is_assignable<T&, U>::value,
+                          Optional&>::type
+  operator=(Optional<U>&& other) {
+    MoveAssign(std::move(other));
+    return *this;
+  }
+
+  const T* operator->() const {
+    PERFETTO_DCHECK(storage_.is_populated_);
+    return &storage_.value_;
+  }
+
+  T* operator->() {
+    PERFETTO_DCHECK(storage_.is_populated_);
+    return &storage_.value_;
+  }
+
+  const T& operator*() const& {
+    PERFETTO_DCHECK(storage_.is_populated_);
+    return storage_.value_;
+  }
+
+  T& operator*() & {
+    PERFETTO_DCHECK(storage_.is_populated_);
+    return storage_.value_;
+  }
+
+  const T&& operator*() const&& {
+    PERFETTO_DCHECK(storage_.is_populated_);
+    return std::move(storage_.value_);
+  }
+
+  T&& operator*() && {
+    PERFETTO_DCHECK(storage_.is_populated_);
+    return std::move(storage_.value_);
+  }
+
+  constexpr explicit operator bool() const { return storage_.is_populated_; }
+
+  constexpr bool has_value() const { return storage_.is_populated_; }
+
+  T& value() & {
+    PERFETTO_CHECK(storage_.is_populated_);
+    return storage_.value_;
+  }
+
+  const T& value() const& {
+    PERFETTO_CHECK(storage_.is_populated_);
+    return storage_.value_;
+  }
+
+  T&& value() && {
+    PERFETTO_CHECK(storage_.is_populated_);
+    return std::move(storage_.value_);
+  }
+
+  const T&& value() const&& {
+    PERFETTO_CHECK(storage_.is_populated_);
+    return std::move(storage_.value_);
+  }
+
+  template <class U>
+  constexpr T value_or(U&& default_value) const& {
+    static_assert(std::is_convertible<U, T>::value,
+                  "U must be convertible to T");
+    return storage_.is_populated_
+               ? storage_.value_
+               : static_cast<T>(std::forward<U>(default_value));
+  }
+
+  template <class U>
+  T value_or(U&& default_value) && {
+    static_assert(std::is_convertible<U, T>::value,
+                  "U must be convertible to T");
+    return storage_.is_populated_
+               ? std::move(storage_.value_)
+               : static_cast<T>(std::forward<U>(default_value));
+  }
+
+  void swap(Optional& other) {
+    if (!storage_.is_populated_ && !other.storage_.is_populated_)
+      return;
+
+    if (storage_.is_populated_ != other.storage_.is_populated_) {
+      if (storage_.is_populated_) {
+        other.storage_.Init(std::move(storage_.value_));
+        FreeIfNeeded();
+      } else {
+        storage_.Init(std::move(other.storage_.value_));
+        other.FreeIfNeeded();
+      }
+      return;
+    }
+
+    PERFETTO_DCHECK(storage_.is_populated_ && other.storage_.is_populated_);
+    using std::swap;
+    swap(**this, *other);
+  }
+
+  void reset() { FreeIfNeeded(); }
+
+  template <class... Args>
+  T& emplace(Args&&... args) {
+    FreeIfNeeded();
+    storage_.Init(std::forward<Args>(args)...);
+    return storage_.value_;
+  }
+
+  template <class U, class... Args>
+  typename std::enable_if<
+      std::is_constructible<T, std::initializer_list<U>&, Args&&...>::value,
+      T&>::type
+  emplace(std::initializer_list<U> il, Args&&... args) {
+    FreeIfNeeded();
+    storage_.Init(il, std::forward<Args>(args)...);
+    return storage_.value_;
+  }
+
+ private:
+  // Accessing template base class's protected member needs explicit
+  // declaration to do so.
+  using internal::OptionalBase<T>::CopyAssign;
+  using internal::OptionalBase<T>::FreeIfNeeded;
+  using internal::OptionalBase<T>::InitOrAssign;
+  using internal::OptionalBase<T>::MoveAssign;
+  using internal::OptionalBase<T>::storage_;
+};
+
+// Here after defines comparation operators. The definition follows
+// http://en.cppreference.com/w/cpp/utility/optional/operator_cmp
+// while bool() casting is replaced by has_value() to meet the chromium
+// style guide.
+template <class T, class U>
+bool operator==(const Optional<T>& lhs, const Optional<U>& rhs) {
+  if (lhs.has_value() != rhs.has_value())
+    return false;
+  if (!lhs.has_value())
+    return true;
+  return *lhs == *rhs;
+}
+
+template <class T, class U>
+bool operator!=(const Optional<T>& lhs, const Optional<U>& rhs) {
+  if (lhs.has_value() != rhs.has_value())
+    return true;
+  if (!lhs.has_value())
+    return false;
+  return *lhs != *rhs;
+}
+
+template <class T, class U>
+bool operator<(const Optional<T>& lhs, const Optional<U>& rhs) {
+  if (!rhs.has_value())
+    return false;
+  if (!lhs.has_value())
+    return true;
+  return *lhs < *rhs;
+}
+
+template <class T, class U>
+bool operator<=(const Optional<T>& lhs, const Optional<U>& rhs) {
+  if (!lhs.has_value())
+    return true;
+  if (!rhs.has_value())
+    return false;
+  return *lhs <= *rhs;
+}
+
+template <class T, class U>
+bool operator>(const Optional<T>& lhs, const Optional<U>& rhs) {
+  if (!lhs.has_value())
+    return false;
+  if (!rhs.has_value())
+    return true;
+  return *lhs > *rhs;
+}
+
+template <class T, class U>
+bool operator>=(const Optional<T>& lhs, const Optional<U>& rhs) {
+  if (!rhs.has_value())
+    return true;
+  if (!lhs.has_value())
+    return false;
+  return *lhs >= *rhs;
+}
+
+template <class T>
+constexpr bool operator==(const Optional<T>& opt, nullopt_t) {
+  return !opt;
+}
+
+template <class T>
+constexpr bool operator==(nullopt_t, const Optional<T>& opt) {
+  return !opt;
+}
+
+template <class T>
+constexpr bool operator!=(const Optional<T>& opt, nullopt_t) {
+  return opt.has_value();
+}
+
+template <class T>
+constexpr bool operator!=(nullopt_t, const Optional<T>& opt) {
+  return opt.has_value();
+}
+
+template <class T>
+constexpr bool operator<(const Optional<T>&, nullopt_t) {
+  return false;
+}
+
+template <class T>
+constexpr bool operator<(nullopt_t, const Optional<T>& opt) {
+  return opt.has_value();
+}
+
+template <class T>
+constexpr bool operator<=(const Optional<T>& opt, nullopt_t) {
+  return !opt;
+}
+
+template <class T>
+constexpr bool operator<=(nullopt_t, const Optional<T>&) {
+  return true;
+}
+
+template <class T>
+constexpr bool operator>(const Optional<T>& opt, nullopt_t) {
+  return opt.has_value();
+}
+
+template <class T>
+constexpr bool operator>(nullopt_t, const Optional<T>&) {
+  return false;
+}
+
+template <class T>
+constexpr bool operator>=(const Optional<T>&, nullopt_t) {
+  return true;
+}
+
+template <class T>
+constexpr bool operator>=(nullopt_t, const Optional<T>& opt) {
+  return !opt;
+}
+
+template <class T, class U>
+constexpr bool operator==(const Optional<T>& opt, const U& value) {
+  return opt.has_value() ? *opt == value : false;
+}
+
+template <class T, class U>
+constexpr bool operator==(const U& value, const Optional<T>& opt) {
+  return opt.has_value() ? value == *opt : false;
+}
+
+template <class T, class U>
+constexpr bool operator!=(const Optional<T>& opt, const U& value) {
+  return opt.has_value() ? *opt != value : true;
+}
+
+template <class T, class U>
+constexpr bool operator!=(const U& value, const Optional<T>& opt) {
+  return opt.has_value() ? value != *opt : true;
+}
+
+template <class T, class U>
+constexpr bool operator<(const Optional<T>& opt, const U& value) {
+  return opt.has_value() ? *opt < value : true;
+}
+
+template <class T, class U>
+constexpr bool operator<(const U& value, const Optional<T>& opt) {
+  return opt.has_value() ? value < *opt : false;
+}
+
+template <class T, class U>
+constexpr bool operator<=(const Optional<T>& opt, const U& value) {
+  return opt.has_value() ? *opt <= value : true;
+}
+
+template <class T, class U>
+constexpr bool operator<=(const U& value, const Optional<T>& opt) {
+  return opt.has_value() ? value <= *opt : false;
+}
+
+template <class T, class U>
+constexpr bool operator>(const Optional<T>& opt, const U& value) {
+  return opt.has_value() ? *opt > value : false;
+}
+
+template <class T, class U>
+constexpr bool operator>(const U& value, const Optional<T>& opt) {
+  return opt.has_value() ? value > *opt : true;
+}
+
+template <class T, class U>
+constexpr bool operator>=(const Optional<T>& opt, const U& value) {
+  return opt.has_value() ? *opt >= value : false;
+}
+
+template <class T, class U>
+constexpr bool operator>=(const U& value, const Optional<T>& opt) {
+  return opt.has_value() ? value >= *opt : true;
+}
+
+template <class T>
+constexpr Optional<typename std::decay<T>::type> make_optional(T&& value) {
+  return Optional<typename std::decay<T>::type>(std::forward<T>(value));
+}
+
+template <class T, class... Args>
+constexpr Optional<T> make_optional(Args&&... args) {
+  return Optional<T>(in_place, std::forward<Args>(args)...);
+}
+
+template <class T, class U, class... Args>
+constexpr Optional<T> make_optional(std::initializer_list<U> il,
+                                    Args&&... args) {
+  return Optional<T>(in_place, il, std::forward<Args>(args)...);
+}
+
+// Partial specialization for a function template is not allowed. Also, it is
+// not allowed to add overload function to std namespace, while it is allowed
+// to specialize the template in std. Thus, swap() (kind of) overloading is
+// defined in base namespace, instead.
+template <class T>
+typename std::enable_if<std::is_move_constructible<T>::value &&
+                        internal::IsSwappable<T>::value>::type
+swap(Optional<T>& lhs, Optional<T>& rhs) {
+  lhs.swap(rhs);
+}
+
+}  // namespace base
+}  // namespace perfetto
+
+template <class T>
+struct std::hash<perfetto::base::Optional<T>> {
+  size_t operator()(const perfetto::base::Optional<T>& opt) const {
+    return opt == perfetto::base::nullopt ? 0 : std::hash<T>()(*opt);
+  }
+};
+
+#endif  // INCLUDE_PERFETTO_EXT_BASE_OPTIONAL_H_
+/*
+ * Copyright (C) 2018 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
+#define INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
+
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <cinttypes>
+#include <string>
+#include <vector>
+
+// gen_amalgamated expanded: #include "perfetto/ext/base/optional.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_view.h"
+
+namespace perfetto {
+namespace base {
+
+inline char Lowercase(char c) {
+  return ('A' <= c && c <= 'Z') ? static_cast<char>(c - ('A' - 'a')) : c;
+}
+
+inline char Uppercase(char c) {
+  return ('a' <= c && c <= 'z') ? static_cast<char>(c + ('A' - 'a')) : c;
+}
+
+inline Optional<uint32_t> CStringToUInt32(const char* s, int base = 10) {
+  char* endptr = nullptr;
+  auto value = static_cast<uint32_t>(strtoul(s, &endptr, base));
+  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
+}
+
+inline Optional<int32_t> CStringToInt32(const char* s, int base = 10) {
+  char* endptr = nullptr;
+  auto value = static_cast<int32_t>(strtol(s, &endptr, base));
+  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
+}
+
+// Note: it saturates to 7fffffffffffffff if parsing a hex number >= 0x8000...
+inline Optional<int64_t> CStringToInt64(const char* s, int base = 10) {
+  char* endptr = nullptr;
+  auto value = static_cast<int64_t>(strtoll(s, &endptr, base));
+  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
+}
+
+inline Optional<uint64_t> CStringToUInt64(const char* s, int base = 10) {
+  char* endptr = nullptr;
+  auto value = static_cast<uint64_t>(strtoull(s, &endptr, base));
+  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
+}
+
+double StrToD(const char* nptr, char** endptr);
+
+inline Optional<double> CStringToDouble(const char* s) {
+  char* endptr = nullptr;
+  double value = StrToD(s, &endptr);
+  Optional<double> result(base::nullopt);
+  if (*s != '\0' && *endptr == '\0')
+    result = value;
+  return result;
+}
+
+inline Optional<uint32_t> StringToUInt32(const std::string& s, int base = 10) {
+  return CStringToUInt32(s.c_str(), base);
+}
+
+inline Optional<int32_t> StringToInt32(const std::string& s, int base = 10) {
+  return CStringToInt32(s.c_str(), base);
+}
+
+inline Optional<uint64_t> StringToUInt64(const std::string& s, int base = 10) {
+  return CStringToUInt64(s.c_str(), base);
+}
+
+inline Optional<int64_t> StringToInt64(const std::string& s, int base = 10) {
+  return CStringToInt64(s.c_str(), base);
+}
+
+inline Optional<double> StringToDouble(const std::string& s) {
+  return CStringToDouble(s.c_str());
+}
+
+bool StartsWith(const std::string& str, const std::string& prefix);
+bool EndsWith(const std::string& str, const std::string& suffix);
+bool StartsWithAny(const std::string& str,
+                   const std::vector<std::string>& prefixes);
+bool Contains(const std::string& haystack, const std::string& needle);
+bool Contains(const std::string& haystack, char needle);
+size_t Find(const StringView& needle, const StringView& haystack);
+bool CaseInsensitiveEqual(const std::string& first, const std::string& second);
+std::string Join(const std::vector<std::string>& parts,
+                 const std::string& delim);
+std::vector<std::string> SplitString(const std::string& text,
+                                     const std::string& delimiter);
+std::string StripPrefix(const std::string& str, const std::string& prefix);
+std::string StripSuffix(const std::string& str, const std::string& suffix);
+std::string ToLower(const std::string& str);
+std::string ToUpper(const std::string& str);
+std::string StripChars(const std::string& str,
+                       const std::string& chars,
+                       char replacement);
+std::string ToHex(const char* data, size_t size);
+inline std::string ToHex(const std::string& s) {
+  return ToHex(s.c_str(), s.size());
+}
+std::string IntToHexString(uint32_t number);
+std::string Uint64ToHexString(uint64_t number);
+std::string Uint64ToHexStringNoPrefix(uint64_t number);
+std::string ReplaceAll(std::string str,
+                       const std::string& to_replace,
+                       const std::string& replacement);
+std::string TrimLeading(const std::string& str);
+std::string Base64Encode(const void* raw, size_t size);
+
+// A BSD-style strlcpy without the return value.
+// Copies at most |dst_size|-1 characters. Unlike strncpy, it always \0
+// terminates |dst|, as long as |dst_size| is not 0.
+// Unlike strncpy and like strlcpy it does not zero-pad the rest of |dst|.
+// Returns nothing. The BSD strlcpy returns the size of |src|, which might
+// be > |dst_size|. Anecdotal experience suggests people assume the return value
+// is the number of bytes written in |dst|. That assumption can lead to
+// dangerous bugs.
+// In order to avoid being subtly uncompliant with strlcpy AND avoid misuse,
+// the choice here is to return nothing.
+inline void StringCopy(char* dst, const char* src, size_t dst_size) {
+  for (size_t i = 0; i < dst_size; ++i) {
+    if ((dst[i] = src[i]) == '\0') {
+      return;  // We hit and copied the null terminator.
+    }
+  }
+
+  // We were left off at dst_size. We over copied 1 byte. Null terminate.
+  if (PERFETTO_LIKELY(dst_size > 0))
+    dst[dst_size - 1] = 0;
+}
+
+// Like snprintf() but returns the number of chars *actually* written (without
+// counting the null terminator) NOT "the number of chars which would have been
+// written to the final string if enough  space had been available".
+// This should be used in almost all cases when the caller uses the return value
+// of snprintf(). If the return value is not used, there is no benefit in using
+// this wrapper, as this just calls snprintf() and mangles the return value.
+// It always null-terminates |dst| (even in case of errors), unless
+// |dst_size| == 0.
+// Examples:
+//   SprintfTrunc(x, 4, "123whatever"): returns 3 and writes "123\0".
+//   SprintfTrunc(x, 4, "123"): returns 3 and writes "123\0".
+//   SprintfTrunc(x, 3, "123"): returns 2 and writes "12\0".
+//   SprintfTrunc(x, 2, "123"): returns 1 and writes "1\0".
+//   SprintfTrunc(x, 1, "123"): returns 0 and writes "\0".
+//   SprintfTrunc(x, 0, "123"): returns 0 and writes nothing.
+// NOTE: This means that the caller has no way to tell when truncation happens
+//   vs the edge case of *just* fitting in the buffer.
+size_t SprintfTrunc(char* dst, size_t dst_size, const char* fmt, ...)
+    PERFETTO_PRINTF_FORMAT(3, 4);
+
+// A helper class to facilitate construction and usage of write-once stack
+// strings.
+// Example usage:
+//   StackString<32> x("format %d %s", 42, string_arg);
+//   TakeString(x.c_str() | x.string_view() | x.ToStdString());
+// Rather than char x[32] + sprintf.
+// Advantages:
+// - Avoids useless zero-fills caused by people doing `char buf[32] {}` (mainly
+//   by fearing unknown snprintf failure modes).
+// - Makes the code more robust in case of snprintf truncations (len() and
+//  string_view() will return the truncated length, unlike snprintf).
+template <size_t N>
+class StackString {
+ public:
+  explicit PERFETTO_PRINTF_FORMAT(/* 1=this */ 2, 3)
+      StackString(const char* fmt, ...) {
+    buf_[0] = '\0';
+    va_list args;
+    va_start(args, fmt);
+    int res = vsnprintf(buf_, sizeof(buf_), fmt, args);
+    va_end(args);
+    buf_[sizeof(buf_) - 1] = '\0';
+    len_ = res < 0 ? 0 : std::min(static_cast<size_t>(res), sizeof(buf_) - 1);
+  }
+
+  StringView string_view() const { return StringView(buf_, len_); }
+  std::string ToStdString() const { return std::string(buf_, len_); }
+  const char* c_str() const { return buf_; }
+  size_t len() const { return len_; }
+
+ private:
+  char buf_[N];
+  size_t len_ = 0;  // Does not include the \0.
+};
+
+}  // namespace base
+}  // namespace perfetto
+
+#endif  // INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
+/*
+ * Copyright (C) 2021 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// gen_amalgamated expanded: #include "perfetto/ext/base/crash_keys.h"
+
+#include <string.h>
+
+#include <atomic>
+#include <cinttypes>
+
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_utils.h"
+
+namespace perfetto {
+namespace base {
+
+namespace {
+
+constexpr size_t kMaxKeys = 32;
+
+std::atomic<CrashKey*> g_keys[kMaxKeys]{};
+std::atomic<uint32_t> g_num_keys{};
+}  // namespace
+
+void CrashKey::Register() {
+  // If doesn't matter if we fail below. If there are no slots left, don't
+  // keep trying re-registering on every Set(), the outcome won't change.
+
+  // If two threads raced on the Register(), avoid registering the key twice.
+  if (registered_.exchange(true))
+    return;
+
+  uint32_t slot = g_num_keys.fetch_add(1);
+  if (slot >= kMaxKeys) {
+    PERFETTO_LOG("Too many crash keys registered");
+    return;
+  }
+  g_keys[slot].store(this);
+}
+
+// Returns the number of chars written, without counting the \0.
+size_t CrashKey::ToString(char* dst, size_t len) {
+  if (len > 0)
+    *dst = '\0';
+  switch (type_) {
+    case Type::kUnset:
+      break;
+    case Type::kInt:
+      return SprintfTrunc(dst, len, "%s: %" PRId64 "\n", name_, int_value_);
+    case Type::kStr:
+      // Don't assume |str_value_| is properly null-terminated.
+      return SprintfTrunc(dst, len, "%s: %.*s\n", name_,
+                          int(sizeof(str_value_)), str_value_);
+  }
+  return 0;
+}
+
+void UnregisterAllCrashKeysForTesting() {
+  g_num_keys.store(0);
+  for (auto& key : g_keys)
+    key.store(nullptr);
+}
+
+size_t SerializeCrashKeys(char* dst, size_t len) {
+  size_t written = 0;
+  uint32_t num_keys = g_num_keys.load();
+  if (len > 0)
+    *dst = '\0';
+  for (uint32_t i = 0; i < num_keys && written < len; i++) {
+    CrashKey* key = g_keys[i].load();
+    if (!key)
+      continue;  // Can happen if we hit this between the add and the store.
+    written += key->ToString(dst + written, len - written);
+  }
+  PERFETTO_DCHECK(written <= len);
+  PERFETTO_DCHECK(len == 0 || dst[written] == '\0');
+  return written;
+}
+
+}  // namespace base
+}  // namespace perfetto
 // gen_amalgamated begin source: src/base/ctrl_c_handler.cc
 // gen_amalgamated begin header: include/perfetto/ext/base/ctrl_c_handler.h
 /*
@@ -685,6 +2307,77 @@ void EventFd::Clear() {
 }  // namespace perfetto
 // gen_amalgamated begin source: src/base/file_utils.cc
 // gen_amalgamated begin header: include/perfetto/ext/base/file_utils.h
+// gen_amalgamated begin header: include/perfetto/base/status.h
+/*
+ * Copyright (C) 2019 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef INCLUDE_PERFETTO_BASE_STATUS_H_
+#define INCLUDE_PERFETTO_BASE_STATUS_H_
+
+#include <string>
+
+// gen_amalgamated expanded: #include "perfetto/base/compiler.h"
+// gen_amalgamated expanded: #include "perfetto/base/export.h"
+// gen_amalgamated expanded: #include "perfetto/base/logging.h"
+
+namespace perfetto {
+namespace base {
+
+// Represents either the success or the failure message of a function.
+// This can used as the return type of functions which would usually return an
+// bool for success or int for errno but also wants to add some string context
+// (ususally for logging).
+class PERFETTO_EXPORT Status {
+ public:
+  Status() : ok_(true) {}
+  explicit Status(std::string msg) : ok_(false), message_(std::move(msg)) {
+    PERFETTO_CHECK(!message_.empty());
+  }
+
+  // Copy operations.
+  Status(const Status&) = default;
+  Status& operator=(const Status&) = default;
+
+  // Move operations. The moved-from state is valid but unspecified.
+  Status(Status&&) noexcept = default;
+  Status& operator=(Status&&) = default;
+
+  bool ok() const { return ok_; }
+
+  // When ok() is false this returns the error message. Returns the empty string
+  // otherwise.
+  const std::string& message() const { return message_; }
+  const char* c_message() const { return message_.c_str(); }
+
+ private:
+  bool ok_ = false;
+  std::string message_;
+};
+
+// Returns a status object which represents the Ok status.
+inline Status OkStatus() {
+  return Status();
+}
+
+PERFETTO_PRINTF_FORMAT(1, 2) Status ErrStatus(const char* format, ...);
+
+}  // namespace base
+}  // namespace perfetto
+
+#endif  // INCLUDE_PERFETTO_BASE_STATUS_H_
 /*
  * Copyright (C) 2018 The Android Open Source Project
  *
@@ -708,10 +2401,13 @@ void EventFd::Clear() {
 #include <stddef.h>
 
 #include <string>
+#include <vector>
 
 // gen_amalgamated expanded: #include "perfetto/base/build_config.h"
 // gen_amalgamated expanded: #include "perfetto/base/export.h"
+// gen_amalgamated expanded: #include "perfetto/base/status.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/scoped_file.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/optional.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/utils.h"
 
 namespace perfetto {
@@ -765,6 +2461,21 @@ bool Rmdir(const std::string& path);
 // Wrapper around access(path, F_OK).
 bool FileExists(const std::string& path);
 
+// Gets the extension for a filename. If the file has two extensions, returns
+// only the last one (foo.pb.gz => .gz). Returns empty string if there is no
+// extension.
+std::string GetFileExtension(const std::string& filename);
+
+// Puts the path to all files under |dir_path| in |output|, recursively walking
+// subdirectories. File paths are relative to |dir_path|. Only files are
+// included, not directories. Path separator is always '/', even on windows (not
+// '\').
+base::Status ListFilesRecursive(const std::string& dir_path,
+                                std::vector<std::string>& output);
+
+// Returns the size of the file at `path` or nullopt in case of error.
+Optional<size_t> GetFileSize(const std::string& path);
+
 }  // namespace base
 }  // namespace perfetto
 
@@ -791,10 +2502,14 @@ bool FileExists(const std::string& path);
 #include <sys/types.h>
 
 #include <algorithm>
+#include <deque>
+#include <string>
+#include <vector>
 
 // gen_amalgamated expanded: #include "perfetto/base/build_config.h"
 // gen_amalgamated expanded: #include "perfetto/base/logging.h"
 // gen_amalgamated expanded: #include "perfetto/base/platform_handle.h"
+// gen_amalgamated expanded: #include "perfetto/base/status.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/scoped_file.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/utils.h"
 
@@ -811,7 +2526,7 @@ namespace perfetto {
 namespace base {
 namespace {
 constexpr size_t kBufSize = 2048;
-}
+}  // namespace
 
 ssize_t Read(int fd, void* dst, size_t dst_size) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
@@ -976,6 +2691,115 @@ int ClosePlatformHandle(PlatformHandle handle) {
   return CloseHandle(handle) ? 0 : -1;
 #else
   return close(handle);
+#endif
+}
+
+base::Status ListFilesRecursive(const std::string& dir_path,
+                                std::vector<std::string>& output) {
+  std::string root_dir_path = dir_path;
+  if (root_dir_path.back() == '\\') {
+    root_dir_path.back() = '/';
+  } else if (root_dir_path.back() != '/') {
+    root_dir_path.push_back('/');
+  }
+
+  // dir_queue contains full paths to the directories. The paths include the
+  // root_dir_path at the beginning and the trailing slash at the end.
+  std::deque<std::string> dir_queue;
+  dir_queue.push_back(root_dir_path);
+
+  while (!dir_queue.empty()) {
+    const std::string cur_dir = std::move(dir_queue.front());
+    dir_queue.pop_front();
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
+    return base::ErrStatus("ListFilesRecursive not supported yet");
+#elif PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+    std::string glob_path = cur_dir + "*";
+    // + 1 because we also have to count the NULL terminator.
+    if (glob_path.length() + 1 > MAX_PATH)
+      return base::ErrStatus("Directory path %s is too long", dir_path.c_str());
+    WIN32_FIND_DATAA ffd;
+    // We do not use a ScopedResource for the HANDLE from FindFirstFile because
+    // the invalid value INVALID_HANDLE_VALUE is not a constexpr under some
+    // compile configurations, and thus cannot be used as a template argument.
+    HANDLE hFind = FindFirstFileA(glob_path.c_str(), &ffd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+      // For empty directories, there should be at least one entry '.'.
+      // If FindFirstFileA returns INVALID_HANDLE_VALUE, this means directory
+      // couldn't be accessed.
+      FindClose(hFind);
+      return base::ErrStatus("Failed to open directory %s", cur_dir.c_str());
+    }
+    do {
+      if (strcmp(ffd.cFileName, ".") == 0 || strcmp(ffd.cFileName, "..") == 0)
+        continue;
+      if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        std::string subdir_path = cur_dir + ffd.cFileName + '/';
+        dir_queue.push_back(subdir_path);
+      } else if (ffd.dwFileAttributes & FILE_ATTRIBUTE_NORMAL) {
+        const std::string full_path = cur_dir + ffd.cFileName;
+        PERFETTO_CHECK(full_path.length() > root_dir_path.length());
+        output.push_back(full_path.substr(root_dir_path.length()));
+      }
+    } while (FindNextFileA(hFind, &ffd));
+    FindClose(hFind);
+#else
+    ScopedDir dir = ScopedDir(opendir(cur_dir.c_str()));
+    if (!dir) {
+      return base::ErrStatus("Failed to open directory %s", cur_dir.c_str());
+    }
+    for (auto* dirent = readdir(dir.get()); dirent != nullptr;
+         dirent = readdir(dir.get())) {
+      if (strcmp(dirent->d_name, ".") == 0 ||
+          strcmp(dirent->d_name, "..") == 0) {
+        continue;
+      }
+      if (dirent->d_type == DT_DIR) {
+        dir_queue.push_back(cur_dir + dirent->d_name + '/');
+      } else if (dirent->d_type == DT_REG) {
+        const std::string full_path = cur_dir + dirent->d_name;
+        PERFETTO_CHECK(full_path.length() > root_dir_path.length());
+        output.push_back(full_path.substr(root_dir_path.length()));
+      }
+    }
+#endif
+  }
+  return base::OkStatus();
+}
+
+std::string GetFileExtension(const std::string& filename) {
+  auto ext_idx = filename.rfind('.');
+  if (ext_idx == std::string::npos)
+    return std::string();
+  return filename.substr(ext_idx);
+}
+
+base::Optional<size_t> GetFileSize(const std::string& file_path) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  HANDLE file =
+      CreateFileA(file_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return nullopt;
+  }
+  LARGE_INTEGER file_size;
+  file_size.QuadPart = 0;
+  BOOL ok = GetFileSizeEx(file, &file_size);
+  CloseHandle(file);
+  if (!ok) {
+    return nullopt;
+  }
+  return static_cast<size_t>(file_size.QuadPart);
+#else
+  base::ScopedFile fd(base::OpenFile(file_path, O_RDONLY | O_CLOEXEC));
+  if (!fd) {
+    return nullopt;
+  }
+  struct stat buf{};
+  if (fstat(*fd, &buf) == -1) {
+    return nullopt;
+  }
+  return static_cast<size_t>(buf.st_size);
 #endif
 }
 
@@ -1289,6 +3113,208 @@ int getopt(int argc, char** argv, const char* shortopts) {
 }  // namespace base
 }  // namespace perfetto
 // gen_amalgamated begin source: src/base/logging.cc
+// gen_amalgamated begin header: src/base/log_ring_buffer.h
+// gen_amalgamated begin header: include/perfetto/ext/base/thread_annotations.h
+/*
+ * Copyright (C) 2019 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef INCLUDE_PERFETTO_EXT_BASE_THREAD_ANNOTATIONS_H_
+#define INCLUDE_PERFETTO_EXT_BASE_THREAD_ANNOTATIONS_H_
+
+// gen_amalgamated expanded: #include "perfetto/base/build_config.h"
+
+// Windows TSAN doesn't currently support these annotations.
+#if defined(THREAD_SANITIZER) && !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+extern "C" {
+void AnnotateBenignRaceSized(const char* file,
+                             int line,
+                             unsigned long address,
+                             unsigned long size,
+                             const char* description);
+}
+
+#define PERFETTO_ANNOTATE_BENIGN_RACE_SIZED(pointer, size, description)   \
+  AnnotateBenignRaceSized(__FILE__, __LINE__,                             \
+                          reinterpret_cast<unsigned long>(pointer), size, \
+                          description);
+#else  // defined(ADDRESS_SANITIZER)
+#define PERFETTO_ANNOTATE_BENIGN_RACE_SIZED(pointer, size, description)
+#endif  // defined(ADDRESS_SANITIZER)
+
+#endif  // INCLUDE_PERFETTO_EXT_BASE_THREAD_ANNOTATIONS_H_
+/*
+ * Copyright (C) 2021 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef SRC_BASE_LOG_RING_BUFFER_H_
+#define SRC_BASE_LOG_RING_BUFFER_H_
+
+#include <stddef.h>
+#include <stdio.h>
+
+#include <array>
+#include <atomic>
+
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_view.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/thread_annotations.h"
+
+namespace perfetto {
+namespace base {
+
+// Defined out of line because a static constexpr requires static storage if
+// ODR-used, not worth adding a .cc file just for tests.
+constexpr size_t kLogRingBufEntries = 8;
+constexpr size_t kLogRingBufMsgLen = 256;
+
+// A static non-allocating ring-buffer to hold the most recent log events.
+// This class is really an implementation detail of logging.cc. The only reason
+// why is fully defined in a dedicated header is for allowing unittesting,
+// without leaking extra headers into logging.h (which is a high-fanout header).
+// This is used to report the last logs in a crash report when a CHECK/FATAL
+// is encountered.
+// This class has just an Append() method to insert events into the buffer and
+// a Read() to read the events in FIFO order. Read() is non-destructive.
+//
+// Thread safety considerations:
+// - The Append() method can be called concurrently by several threads, unless
+//   there are > kLogRingBufEntries concurrent threads. Even if that happens,
+//   case some events will contain a mix of strings but the behavior of
+//   futher Append() and Read() is still defined.
+// - The Read() method is not thread safe but it's fine in practice. Even if
+//   it's called concurrently with other Append(), it only causes some partial
+//   events to be emitted in output.
+// In both cases, we never rely purely on \0, all operations are size-bound.
+//
+// See logging_unittest.cc for tests.
+class LogRingBuffer {
+ public:
+  LogRingBuffer() = default;
+  LogRingBuffer(const LogRingBuffer&) = delete;
+  LogRingBuffer& operator=(const LogRingBuffer&) = delete;
+  LogRingBuffer(LogRingBuffer&&) = delete;
+  LogRingBuffer& operator=(LogRingBuffer&&) = delete;
+
+  // This takes three arguments because it fits its only caller (logging.cc).
+  // The args are just concatenated together (plus one space before the msg).
+  void Append(StringView tstamp, StringView source, StringView log_msg) {
+    // Reserve atomically a slot in the ring buffer, so any concurrent Append()
+    // won't overlap (unless too many concurrent Append() happen together).
+    // There is no strict synchronization here, |event_slot_| is atomic only for
+    // the sake of avoiding colliding on the same slot but does NOT guarantee
+    // full consistency and integrity of the log messages written in each slot.
+    // A release-store (or acq+rel) won't be enough for full consistency. Two
+    // threads that race on Append() and take the N+1 and N+2 slots could finish
+    // the write in reverse order. So Read() would need to synchronize with
+    // something else (either a per-slot atomic flag or with a second atomic
+    // counter which is incremented after the snprintf). Both options increase
+    // the cost of Append() with no huge benefits (90% of the perfetto services
+    // where we use it is single thread, and the log ring buffer is disabled
+    // on non-standalone builds like the SDK).
+    uint32_t slot = event_slot_.fetch_add(1, std::memory_order_relaxed);
+    slot = slot % kLogRingBufEntries;
+
+    char* const msg = events_[slot];
+    PERFETTO_ANNOTATE_BENIGN_RACE_SIZED(msg, kLogRingBufMsgLen,
+                                        "see comments in log_ring_buffer.h")
+    snprintf(msg, kLogRingBufMsgLen, "%.*s%.*s %.*s",
+             static_cast<int>(tstamp.size()), tstamp.data(),
+             static_cast<int>(source.size()), source.data(),
+             static_cast<int>(log_msg.size()), log_msg.data());
+  }
+
+  // Reads back the buffer in FIFO order, up to |len - 1| characters at most
+  // (the -1 is because a NUL terminator is always appended, unless |len| == 0).
+  // The string written in |dst| is guaranteed to be NUL-terminated, even if
+  // |len| < buffer contents length.
+  // Returns the number of bytes written in output, excluding the \0 terminator.
+  size_t Read(char* dst, size_t len) {
+    if (len == 0)
+      return 0;
+    // This is a relaxed-load because we don't need to fully synchronize on the
+    // writing path for the reasons described in the fetch_add() above.
+    const uint32_t event_slot = event_slot_.load(std::memory_order_relaxed);
+    size_t dst_written = 0;
+    for (uint32_t pos = 0; pos < kLogRingBufEntries; ++pos) {
+      const uint32_t slot = (event_slot + pos) % kLogRingBufEntries;
+      const char* src = events_[slot];
+      if (*src == '\0')
+        continue;  // Empty slot. Skip.
+      char* const wptr = dst + dst_written;
+      // |src| might not be null terminated. This can happen if some
+      // thread-race happened. Limit the copy length.
+      const size_t limit = std::min(len - dst_written, kLogRingBufMsgLen);
+      for (size_t i = 0; i < limit; ++i) {
+        const char c = src[i];
+        ++dst_written;
+        if (c == '\0' || i == limit - 1) {
+          wptr[i] = '\n';
+          break;
+        }
+        // Skip non-printable ASCII characters to avoid confusing crash reports.
+        // Note that this deliberately mangles \n. Log messages should not have
+        // a \n in the middle and are NOT \n terminated. The trailing \n between
+        // each line is appended by the if () branch above.
+        const bool is_printable = c >= ' ' && c <= '~';
+        wptr[i] = is_printable ? c : '?';
+      }
+    }
+    // Ensure that the output string is null-terminated.
+    PERFETTO_DCHECK(dst_written <= len);
+    if (dst_written == len) {
+      // In case of truncation we replace the last char with \0. But the return
+      // value is the number of chars without \0, hence the --.
+      dst[--dst_written] = '\0';
+    } else {
+      dst[dst_written] = '\0';
+    }
+    return dst_written;
+  }
+
+ private:
+  using EventBuf = char[kLogRingBufMsgLen];
+  EventBuf events_[kLogRingBufEntries]{};
+
+  static_assert((kLogRingBufEntries & (kLogRingBufEntries - 1)) == 0,
+                "kLogRingBufEntries must be a power of two");
+
+  // A monotonically increasing counter incremented on each event written.
+  // It determines which of the kLogRingBufEntries indexes in |events_| should
+  // be used next.
+  // It grows >> kLogRingBufEntries, it's supposed to be always used
+  // mod(kLogRingBufEntries). A static_assert in the .cc file ensures that
+  // kLogRingBufEntries is a power of two so wraps are aligned.
+  std::atomic<uint32_t> event_slot_{};
+};
+
+}  // namespace base
+}  // namespace perfetto
+
+#endif  // SRC_BASE_LOG_RING_BUFFER_H_
 /*
  * Copyright (C) 2019 The Android Open Source Project
  *
@@ -1317,7 +3343,16 @@ int getopt(int argc, char** argv, const char* shortopts) {
 #include <atomic>
 #include <memory>
 
+// gen_amalgamated expanded: #include "perfetto/base/build_config.h"
 // gen_amalgamated expanded: #include "perfetto/base/time.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/crash_keys.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_utils.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_view.h"
+// gen_amalgamated expanded: #include "src/base/log_ring_buffer.h"
+
+#if PERFETTO_ENABLE_LOG_RING_BUFFER() && PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+#include <android/set_abort_message.h>
+#endif
 
 namespace perfetto {
 namespace base {
@@ -1331,6 +3366,28 @@ const char kBoldGreen[] = "\x1b[1m\x1b[32m";
 const char kLightGray[] = "\x1b[90m";
 
 std::atomic<LogMessageCallback> g_log_callback{};
+
+#if PERFETTO_BUILDFLAG(PERFETTO_STDERR_CRASH_DUMP)
+// __attribute__((constructor)) causes a static initializer that automagically
+// early runs this function before the main().
+void PERFETTO_EXPORT __attribute__((constructor)) InitDebugCrashReporter() {
+  // This function is defined in debug_crash_stack_trace.cc.
+  // The dynamic initializer is in logging.cc because logging.cc is included
+  // in virtually any target that depends on base. Having it in
+  // debug_crash_stack_trace.cc would require figuring out -Wl,whole-archive
+  // which is not worth it.
+  EnableStacktraceOnCrashForDebug();
+}
+#endif
+
+#if PERFETTO_ENABLE_LOG_RING_BUFFER()
+LogRingBuffer g_log_ring_buffer{};
+
+// This is global to avoid allocating memory or growing too much the stack
+// in MaybeSerializeLastLogsForCrashReporting(), which is called from
+// arbitrary code paths hitting PERFETTO_CHECK()/FATAL().
+char g_crash_buf[kLogRingBufEntries * kLogRingBufMsgLen];
+#endif
 
 }  // namespace
 
@@ -1346,6 +3403,7 @@ void LogMessage(LogLev level,
   char stack_buf[512];
   std::unique_ptr<char[]> large_buf;
   char* log_msg = &stack_buf[0];
+  size_t log_msg_len = 0;
 
   // By default use a stack allocated buffer because most log messages are quite
   // short. In rare cases they can be larger (e.g. --help). In those cases we
@@ -1360,14 +3418,18 @@ void LogMessage(LogLev level,
     // it. The code below will attach the filename and line, which is still
     // useful.
     if (res < 0) {
-      strncpy(log_msg, "[printf format error]", max_len);
+      snprintf(log_msg, max_len, "%s", "[printf format error]");
       break;
     }
 
     // if res == max_len, vsnprintf saturated the input buffer. Retry with a
     // larger buffer in that case (within reasonable limits).
-    if (res < static_cast<int>(max_len) || max_len >= 128 * 1024)
+    if (res < static_cast<int>(max_len) || max_len >= 128 * 1024) {
+      // In case of truncation vsnprintf returns the len that "would have been
+      // written if the string was longer", not the actual chars written.
+      log_msg_len = std::min(static_cast<size_t>(res), max_len - 1);
       break;
+    }
     max_len *= 4;
     large_buf.reset(new char[max_len]);
     log_msg = &large_buf[0];
@@ -1405,44 +3467,85 @@ void LogMessage(LogLev level,
 
   // Formats file.cc:line as a space-padded fixed width string. If the file name
   // |fname| is too long, truncate it on the left-hand side.
-  char line_str[10];
-  size_t line_len =
-      static_cast<size_t>(snprintf(line_str, sizeof(line_str), "%d", line));
+  StackString<10> line_str("%d", line);
 
   // 24 will be the width of the file.cc:line column in the log event.
-  char file_and_line[24];
+  static constexpr size_t kMaxNameAndLine = 24;
   size_t fname_len = strlen(fname);
-  size_t fname_max = sizeof(file_and_line) - line_len - 2;  // 2 = ':' + '\0'.
+  size_t fname_max = kMaxNameAndLine - line_str.len() - 2;  // 2 = ':' + '\0'.
   size_t fname_offset = fname_len <= fname_max ? 0 : fname_len - fname_max;
-  int len = snprintf(file_and_line, sizeof(file_and_line), "%s:%s",
-                     fname + fname_offset, line_str);
-  memset(&file_and_line[len], ' ', sizeof(file_and_line) - size_t(len));
-  file_and_line[sizeof(file_and_line) - 1] = '\0';
+  StackString<kMaxNameAndLine> file_and_line(
+      "%*s:%s", static_cast<int>(fname_max), &fname[fname_offset],
+      line_str.c_str());
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   // Logcat has already timestamping, don't re-emit it.
   __android_log_print(ANDROID_LOG_DEBUG + level, "perfetto", "%s %s",
-                      file_and_line, log_msg);
+                      file_and_line.c_str(), log_msg);
 #endif
 
   // When printing on stderr, print also the timestamp. We don't really care
   // about the actual time. We just need some reference clock that can be used
   // to correlated events across differrent processses (e.g. traced and
   // traced_probes). The wall time % 1000 is good enough.
-  char timestamp[32];
   uint32_t t_ms = static_cast<uint32_t>(GetWallTimeMs().count());
   uint32_t t_sec = t_ms / 1000;
   t_ms -= t_sec * 1000;
   t_sec = t_sec % 1000;
-  snprintf(timestamp, sizeof(timestamp), "[%03u.%03u] ", t_sec, t_ms);
+  StackString<32> timestamp("[%03u.%03u] ", t_sec, t_ms);
 
   if (use_colors) {
-    fprintf(stderr, "%s%s%s%s %s%s%s\n", kLightGray, timestamp, file_and_line,
-            kReset, color, log_msg, kReset);
+    fprintf(stderr, "%s%s%s%s %s%s%s\n", kLightGray, timestamp.c_str(),
+            file_and_line.c_str(), kReset, color, log_msg, kReset);
   } else {
-    fprintf(stderr, "%s%s %s\n", timestamp, file_and_line, log_msg);
+    fprintf(stderr, "%s%s %s\n", timestamp.c_str(), file_and_line.c_str(),
+            log_msg);
   }
+
+#if PERFETTO_ENABLE_LOG_RING_BUFFER()
+  // Append the message to the ring buffer for crash reporting postmortems.
+  StringView timestamp_sv = timestamp.string_view();
+  StringView file_and_line_sv = file_and_line.string_view();
+  StringView log_msg_sv(log_msg, static_cast<size_t>(log_msg_len));
+  g_log_ring_buffer.Append(timestamp_sv, file_and_line_sv, log_msg_sv);
+#else
+  ignore_result(log_msg_len);
+#endif
 }
+
+#if PERFETTO_ENABLE_LOG_RING_BUFFER()
+void MaybeSerializeLastLogsForCrashReporting() {
+  // Keep this function minimal. This is called from the watchdog thread, often
+  // when the system is thrashing.
+
+  // This is racy because two threads could hit a CHECK/FATAL at the same time.
+  // But if that happens we have bigger problems, not worth designing around it.
+  // The behaviour is still defined in the race case (the string attached to
+  // the crash report will contain a mixture of log strings).
+  size_t wr = 0;
+  wr += SerializeCrashKeys(&g_crash_buf[wr], sizeof(g_crash_buf) - wr);
+  wr += g_log_ring_buffer.Read(&g_crash_buf[wr], sizeof(g_crash_buf) - wr);
+
+  // Read() null-terminates the string properly. This is just to avoid UB when
+  // two threads race on each other (T1 writes a shorter string, T2
+  // overwrites the \0 writing a longer string. T1 continues here before T2
+  // finishes writing the longer string with the \0 -> boom.
+  g_crash_buf[sizeof(g_crash_buf) - 1] = '\0';
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+  // android_set_abort_message() will cause debuggerd to report the message
+  // in the tombstone and in the crash log in logcat.
+  // NOTE: android_set_abort_message() can be called only once. This should
+  // be called only when we are sure we are about to crash.
+  android_set_abort_message(g_crash_buf);
+#else
+  // Print out the message on stderr on Linux/Mac/Win.
+  fputs("\n-----BEGIN PERFETTO PRE-CRASH LOG-----\n", stderr);
+  fputs(g_crash_buf, stderr);
+  fputs("\n-----END PERFETTO PRE-CRASH LOG-----\n", stderr);
+#endif
+}
+#endif  // PERFETTO_ENABLE_LOG_RING_BUFFER
 
 }  // namespace base
 }  // namespace perfetto
@@ -1963,47 +4066,6 @@ class PERFETTO_EXPORT TaskRunner {
 }  // namespace perfetto
 
 #endif  // INCLUDE_PERFETTO_BASE_TASK_RUNNER_H_
-// gen_amalgamated begin header: include/perfetto/ext/base/thread_annotations.h
-/*
- * Copyright (C) 2019 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#ifndef INCLUDE_PERFETTO_EXT_BASE_THREAD_ANNOTATIONS_H_
-#define INCLUDE_PERFETTO_EXT_BASE_THREAD_ANNOTATIONS_H_
-
-// gen_amalgamated expanded: #include "perfetto/base/build_config.h"
-
-// Windows TSAN doesn't currently support these annotations.
-#if defined(THREAD_SANITIZER) && !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-extern "C" {
-void AnnotateBenignRaceSized(const char* file,
-                             int line,
-                             unsigned long address,
-                             unsigned long size,
-                             const char* description);
-}
-
-#define PERFETTO_ANNOTATE_BENIGN_RACE_SIZED(pointer, size, description)   \
-  AnnotateBenignRaceSized(__FILE__, __LINE__,                             \
-                          reinterpret_cast<unsigned long>(pointer), size, \
-                          description);
-#else  // defined(ADDRESS_SANITIZER)
-#define PERFETTO_ANNOTATE_BENIGN_RACE_SIZED(pointer, size, description)
-#endif  // defined(ADDRESS_SANITIZER)
-
-#endif  // INCLUDE_PERFETTO_EXT_BASE_THREAD_ANNOTATIONS_H_
 /*
  * Copyright (C) 2018 The Android Open Source Project
  *
@@ -3003,77 +5065,6 @@ Pipe Pipe::Create(Flags flags) {
 }  // namespace base
 }  // namespace perfetto
 // gen_amalgamated begin source: src/base/status.cc
-// gen_amalgamated begin header: include/perfetto/base/status.h
-/*
- * Copyright (C) 2019 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#ifndef INCLUDE_PERFETTO_BASE_STATUS_H_
-#define INCLUDE_PERFETTO_BASE_STATUS_H_
-
-#include <string>
-
-// gen_amalgamated expanded: #include "perfetto/base/compiler.h"
-// gen_amalgamated expanded: #include "perfetto/base/export.h"
-// gen_amalgamated expanded: #include "perfetto/base/logging.h"
-
-namespace perfetto {
-namespace base {
-
-// Represents either the success or the failure message of a function.
-// This can used as the return type of functions which would usually return an
-// bool for success or int for errno but also wants to add some string context
-// (ususally for logging).
-class PERFETTO_EXPORT Status {
- public:
-  Status() : ok_(true) {}
-  explicit Status(std::string msg) : ok_(false), message_(std::move(msg)) {
-    PERFETTO_CHECK(!message_.empty());
-  }
-
-  // Copy operations.
-  Status(const Status&) = default;
-  Status& operator=(const Status&) = default;
-
-  // Move operations. The moved-from state is valid but unspecified.
-  Status(Status&&) noexcept = default;
-  Status& operator=(Status&&) = default;
-
-  bool ok() const { return ok_; }
-
-  // When ok() is false this returns the error message. Returns the empty string
-  // otherwise.
-  const std::string& message() const { return message_; }
-  const char* c_message() const { return message_.c_str(); }
-
- private:
-  bool ok_ = false;
-  std::string message_;
-};
-
-// Returns a status object which represents the Ok status.
-inline Status OkStatus() {
-  return Status();
-}
-
-PERFETTO_PRINTF_FORMAT(1, 2) Status ErrStatus(const char* format, ...);
-
-}  // namespace base
-}  // namespace perfetto
-
-#endif  // INCLUDE_PERFETTO_BASE_STATUS_H_
 /*
  * Copyright (C) 2020 The Android Open Source Project
  *
@@ -3266,1295 +5257,6 @@ bool StringSplitter::Next() {
 }  // namespace base
 }  // namespace perfetto
 // gen_amalgamated begin source: src/base/string_utils.cc
-// gen_amalgamated begin header: include/perfetto/ext/base/string_utils.h
-// gen_amalgamated begin header: include/perfetto/ext/base/optional.h
-/*
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#ifndef INCLUDE_PERFETTO_EXT_BASE_OPTIONAL_H_
-#define INCLUDE_PERFETTO_EXT_BASE_OPTIONAL_H_
-
-#include <functional>
-#include <type_traits>
-#include <utility>
-
-// gen_amalgamated expanded: #include "perfetto/base/logging.h"
-
-namespace perfetto {
-namespace base {
-
-// Specification:
-// http://en.cppreference.com/w/cpp/utility/optional/in_place_t
-struct in_place_t {};
-
-// Specification:
-// http://en.cppreference.com/w/cpp/utility/optional/nullopt_t
-struct nullopt_t {
-  constexpr explicit nullopt_t(int) {}
-};
-
-// Specification:
-// http://en.cppreference.com/w/cpp/utility/optional/in_place
-constexpr in_place_t in_place = {};
-
-// Specification:
-// http://en.cppreference.com/w/cpp/utility/optional/nullopt
-constexpr nullopt_t nullopt(0);
-
-// Forward declaration, which is referred by following helpers.
-template <typename T>
-class Optional;
-
-namespace internal {
-
-template <typename T, bool = std::is_trivially_destructible<T>::value>
-struct OptionalStorageBase {
-  // Initializing |empty_| here instead of using default member initializing
-  // to avoid errors in g++ 4.8.
-  constexpr OptionalStorageBase() : empty_('\0') {}
-
-  template <class... Args>
-  constexpr explicit OptionalStorageBase(in_place_t, Args&&... args)
-      : is_populated_(true), value_(std::forward<Args>(args)...) {}
-
-  // When T is not trivially destructible we must call its
-  // destructor before deallocating its memory.
-  // Note that this hides the (implicitly declared) move constructor, which
-  // would be used for constexpr move constructor in OptionalStorage<T>.
-  // It is needed iff T is trivially move constructible. However, the current
-  // is_trivially_{copy,move}_constructible implementation requires
-  // is_trivially_destructible (which looks a bug, cf:
-  // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=51452 and
-  // http://cplusplus.github.io/LWG/lwg-active.html#2116), so it is not
-  // necessary for this case at the moment. Please see also the destructor
-  // comment in "is_trivially_destructible = true" specialization below.
-  ~OptionalStorageBase() {
-    if (is_populated_)
-      value_.~T();
-  }
-
-  template <class... Args>
-  void Init(Args&&... args) {
-    PERFETTO_DCHECK(!is_populated_);
-    ::new (&value_) T(std::forward<Args>(args)...);
-    is_populated_ = true;
-  }
-
-  bool is_populated_ = false;
-  union {
-    // |empty_| exists so that the union will always be initialized, even when
-    // it doesn't contain a value. Union members must be initialized for the
-    // constructor to be 'constexpr'.
-    char empty_;
-    T value_;
-  };
-};
-
-template <typename T>
-struct OptionalStorageBase<T, true /* trivially destructible */> {
-  // Initializing |empty_| here instead of using default member initializing
-  // to avoid errors in g++ 4.8.
-  constexpr OptionalStorageBase() : empty_('\0') {}
-
-  template <class... Args>
-  constexpr explicit OptionalStorageBase(in_place_t, Args&&... args)
-      : is_populated_(true), value_(std::forward<Args>(args)...) {}
-
-  // When T is trivially destructible (i.e. its destructor does nothing) there
-  // is no need to call it. Implicitly defined destructor is trivial, because
-  // both members (bool and union containing only variants which are trivially
-  // destructible) are trivially destructible.
-  // Explicitly-defaulted destructor is also trivial, but do not use it here,
-  // because it hides the implicit move constructor. It is needed to implement
-  // constexpr move constructor in OptionalStorage iff T is trivially move
-  // constructible. Note that, if T is trivially move constructible, the move
-  // constructor of OptionalStorageBase<T> is also implicitly defined and it is
-  // trivially move constructor. If T is not trivially move constructible,
-  // "not declaring move constructor without destructor declaration" here means
-  // "delete move constructor", which works because any move constructor of
-  // OptionalStorage will not refer to it in that case.
-
-  template <class... Args>
-  void Init(Args&&... args) {
-    PERFETTO_DCHECK(!is_populated_);
-    ::new (&value_) T(std::forward<Args>(args)...);
-    is_populated_ = true;
-  }
-
-  bool is_populated_ = false;
-  union {
-    // |empty_| exists so that the union will always be initialized, even when
-    // it doesn't contain a value. Union members must be initialized for the
-    // constructor to be 'constexpr'.
-    char empty_;
-    T value_;
-  };
-};
-
-// Implement conditional constexpr copy and move constructors. These are
-// constexpr if is_trivially_{copy,move}_constructible<T>::value is true
-// respectively. If each is true, the corresponding constructor is defined as
-// "= default;", which generates a constexpr constructor (In this case,
-// the condition of constexpr-ness is satisfied because the base class also has
-// compiler generated constexpr {copy,move} constructors). Note that
-// placement-new is prohibited in constexpr.
-template <typename T, bool = std::is_trivially_copy_constructible<T>::value>
-struct OptionalStorage : OptionalStorageBase<T> {
-  // This is no trivially {copy,move} constructible case. Other cases are
-  // defined below as specializations.
-
-  // Accessing the members of template base class requires explicit
-  // declaration.
-  using OptionalStorageBase<T>::is_populated_;
-  using OptionalStorageBase<T>::value_;
-  using OptionalStorageBase<T>::Init;
-
-  // Inherit constructors (specifically, the in_place constructor).
-  using OptionalStorageBase<T>::OptionalStorageBase;
-
-  // User defined constructor deletes the default constructor.
-  // Define it explicitly.
-  OptionalStorage() = default;
-
-  OptionalStorage(const OptionalStorage& other) : OptionalStorageBase<T>() {
-    if (other.is_populated_)
-      Init(other.value_);
-  }
-
-  OptionalStorage(OptionalStorage&& other) noexcept(
-      std::is_nothrow_move_constructible<T>::value) {
-    if (other.is_populated_)
-      Init(std::move(other.value_));
-  }
-};
-
-template <typename T>
-struct OptionalStorage<T, true /* trivially copy constructible */>
-    : OptionalStorageBase<T> {
-  using OptionalStorageBase<T>::is_populated_;
-  using OptionalStorageBase<T>::value_;
-  using OptionalStorageBase<T>::Init;
-  using OptionalStorageBase<T>::OptionalStorageBase;
-
-  OptionalStorage() = default;
-  OptionalStorage(const OptionalStorage& other) = default;
-
-  OptionalStorage(OptionalStorage&& other) noexcept(
-      std::is_nothrow_move_constructible<T>::value) {
-    if (other.is_populated_)
-      Init(std::move(other.value_));
-  }
-};
-
-// Base class to support conditionally usable copy-/move- constructors
-// and assign operators.
-template <typename T>
-class OptionalBase {
-  // This class provides implementation rather than public API, so everything
-  // should be hidden. Often we use composition, but we cannot in this case
-  // because of C++ language restriction.
- protected:
-  constexpr OptionalBase() = default;
-  constexpr OptionalBase(const OptionalBase& other) = default;
-  constexpr OptionalBase(OptionalBase&& other) = default;
-
-  template <class... Args>
-  constexpr explicit OptionalBase(in_place_t, Args&&... args)
-      : storage_(in_place, std::forward<Args>(args)...) {}
-
-  // Implementation of converting constructors.
-  template <typename U>
-  explicit OptionalBase(const OptionalBase<U>& other) {
-    if (other.storage_.is_populated_)
-      storage_.Init(other.storage_.value_);
-  }
-
-  template <typename U>
-  explicit OptionalBase(OptionalBase<U>&& other) {
-    if (other.storage_.is_populated_)
-      storage_.Init(std::move(other.storage_.value_));
-  }
-
-  ~OptionalBase() = default;
-
-  OptionalBase& operator=(const OptionalBase& other) {
-    CopyAssign(other);
-    return *this;
-  }
-
-  OptionalBase& operator=(OptionalBase&& other) noexcept(
-      std::is_nothrow_move_assignable<T>::value&&
-          std::is_nothrow_move_constructible<T>::value) {
-    MoveAssign(std::move(other));
-    return *this;
-  }
-
-  template <typename U>
-  void CopyAssign(const OptionalBase<U>& other) {
-    if (other.storage_.is_populated_)
-      InitOrAssign(other.storage_.value_);
-    else
-      FreeIfNeeded();
-  }
-
-  template <typename U>
-  void MoveAssign(OptionalBase<U>&& other) {
-    if (other.storage_.is_populated_)
-      InitOrAssign(std::move(other.storage_.value_));
-    else
-      FreeIfNeeded();
-  }
-
-  template <typename U>
-  void InitOrAssign(U&& value) {
-    if (storage_.is_populated_)
-      storage_.value_ = std::forward<U>(value);
-    else
-      storage_.Init(std::forward<U>(value));
-  }
-
-  void FreeIfNeeded() {
-    if (!storage_.is_populated_)
-      return;
-    storage_.value_.~T();
-    storage_.is_populated_ = false;
-  }
-
-  // For implementing conversion, allow access to other typed OptionalBase
-  // class.
-  template <typename U>
-  friend class OptionalBase;
-
-  OptionalStorage<T> storage_;
-};
-
-// The following {Copy,Move}{Constructible,Assignable} structs are helpers to
-// implement constructor/assign-operator overloading. Specifically, if T is
-// is not movable but copyable, Optional<T>'s move constructor should not
-// participate in overload resolution. This inheritance trick implements that.
-template <bool is_copy_constructible>
-struct CopyConstructible {};
-
-template <>
-struct CopyConstructible<false> {
-  constexpr CopyConstructible() = default;
-  constexpr CopyConstructible(const CopyConstructible&) = delete;
-  constexpr CopyConstructible(CopyConstructible&&) = default;
-  CopyConstructible& operator=(const CopyConstructible&) = default;
-  CopyConstructible& operator=(CopyConstructible&&) = default;
-};
-
-template <bool is_move_constructible>
-struct MoveConstructible {};
-
-template <>
-struct MoveConstructible<false> {
-  constexpr MoveConstructible() = default;
-  constexpr MoveConstructible(const MoveConstructible&) = default;
-  constexpr MoveConstructible(MoveConstructible&&) = delete;
-  MoveConstructible& operator=(const MoveConstructible&) = default;
-  MoveConstructible& operator=(MoveConstructible&&) = default;
-};
-
-template <bool is_copy_assignable>
-struct CopyAssignable {};
-
-template <>
-struct CopyAssignable<false> {
-  constexpr CopyAssignable() = default;
-  constexpr CopyAssignable(const CopyAssignable&) = default;
-  constexpr CopyAssignable(CopyAssignable&&) = default;
-  CopyAssignable& operator=(const CopyAssignable&) = delete;
-  CopyAssignable& operator=(CopyAssignable&&) = default;
-};
-
-template <bool is_move_assignable>
-struct MoveAssignable {};
-
-template <>
-struct MoveAssignable<false> {
-  constexpr MoveAssignable() = default;
-  constexpr MoveAssignable(const MoveAssignable&) = default;
-  constexpr MoveAssignable(MoveAssignable&&) = default;
-  MoveAssignable& operator=(const MoveAssignable&) = default;
-  MoveAssignable& operator=(MoveAssignable&&) = delete;
-};
-
-// Helper to conditionally enable converting constructors and assign operators.
-template <typename T, typename U>
-struct IsConvertibleFromOptional
-    : std::integral_constant<
-          bool,
-          std::is_constructible<T, Optional<U>&>::value ||
-              std::is_constructible<T, const Optional<U>&>::value ||
-              std::is_constructible<T, Optional<U>&&>::value ||
-              std::is_constructible<T, const Optional<U>&&>::value ||
-              std::is_convertible<Optional<U>&, T>::value ||
-              std::is_convertible<const Optional<U>&, T>::value ||
-              std::is_convertible<Optional<U>&&, T>::value ||
-              std::is_convertible<const Optional<U>&&, T>::value> {};
-
-template <typename T, typename U>
-struct IsAssignableFromOptional
-    : std::integral_constant<
-          bool,
-          IsConvertibleFromOptional<T, U>::value ||
-              std::is_assignable<T&, Optional<U>&>::value ||
-              std::is_assignable<T&, const Optional<U>&>::value ||
-              std::is_assignable<T&, Optional<U>&&>::value ||
-              std::is_assignable<T&, const Optional<U>&&>::value> {};
-
-// Forward compatibility for C++17.
-// Introduce one more deeper nested namespace to avoid leaking using std::swap.
-namespace swappable_impl {
-using std::swap;
-
-struct IsSwappableImpl {
-  // Tests if swap can be called. Check<T&>(0) returns true_type iff swap is
-  // available for T. Otherwise, Check's overload resolution falls back to
-  // Check(...) declared below thanks to SFINAE, so returns false_type.
-  template <typename T>
-  static auto Check(int)
-      -> decltype(swap(std::declval<T>(), std::declval<T>()), std::true_type());
-
-  template <typename T>
-  static std::false_type Check(...);
-};
-}  // namespace swappable_impl
-
-template <typename T>
-struct IsSwappable : decltype(swappable_impl::IsSwappableImpl::Check<T&>(0)) {};
-
-// Forward compatibility for C++20.
-template <typename T>
-using RemoveCvRefT =
-    typename std::remove_cv<typename std::remove_reference<T>::type>::type;
-
-}  // namespace internal
-
-// On Windows, by default, empty-base class optimization does not work,
-// which means even if the base class is empty struct, it still consumes one
-// byte for its body. __declspec(empty_bases) enables the optimization.
-// cf)
-// https://blogs.msdn.microsoft.com/vcblog/2016/03/30/optimizing-the-layout-of-empty-base-classes-in-vs2015-update-2-3/
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
-    !PERFETTO_BUILDFLAG(PERFETTO_COMPILER_GCC)
-#define OPTIONAL_DECLSPEC_EMPTY_BASES __declspec(empty_bases)
-#else
-#define OPTIONAL_DECLSPEC_EMPTY_BASES
-#endif
-
-// base::Optional is a Chromium version of the C++17 optional class:
-// std::optional documentation:
-// http://en.cppreference.com/w/cpp/utility/optional
-// Chromium documentation:
-// https://chromium.googlesource.com/chromium/src/+/master/docs/optional.md
-//
-// These are the differences between the specification and the implementation:
-// - Constructors do not use 'constexpr' as it is a C++14 extension.
-// - 'constexpr' might be missing in some places for reasons specified locally.
-// - No exceptions are thrown, because they are banned from Chromium.
-//   Marked noexcept for only move constructor and move assign operators.
-// - All the non-members are in the 'base' namespace instead of 'std'.
-//
-// Note that T cannot have a constructor T(Optional<T>) etc. Optional<T>
-// PERFETTO_CHECKs T's constructor (specifically via IsConvertibleFromOptional),
-// and in the PERFETTO_CHECK whether T can be constructible from Optional<T>,
-// which is recursive so it does not work. As of Feb 2018, std::optional C++17
-// implementation in both clang and gcc has same limitation. MSVC SFINAE looks
-// to have different behavior, but anyway it reports an error, too.
-//
-// This file is a modified version of optional.h from Chromium at revision
-// 5e71bd454e60511c1293c0c686544aaa76094424. The changes remove C++14/C++17
-// specific code and replace with C++11 counterparts.
-template <typename T>
-class OPTIONAL_DECLSPEC_EMPTY_BASES Optional
-    : public internal::OptionalBase<T>,
-      public internal::CopyConstructible<std::is_copy_constructible<T>::value>,
-      public internal::MoveConstructible<std::is_move_constructible<T>::value>,
-      public internal::CopyAssignable<std::is_copy_constructible<T>::value &&
-                                      std::is_copy_assignable<T>::value>,
-      public internal::MoveAssignable<std::is_move_constructible<T>::value &&
-                                      std::is_move_assignable<T>::value> {
- public:
-#undef OPTIONAL_DECLSPEC_EMPTY_BASES
-  using value_type = T;
-
-  // Defer default/copy/move constructor implementation to OptionalBase.
-  constexpr Optional() = default;
-  constexpr Optional(const Optional& other) = default;
-  constexpr Optional(Optional&& other) noexcept(
-      std::is_nothrow_move_constructible<T>::value) = default;
-
-  constexpr Optional(nullopt_t) {}  // NOLINT(runtime/explicit)
-
-  // Converting copy constructor. "explicit" only if
-  // std::is_convertible<const U&, T>::value is false. It is implemented by
-  // declaring two almost same constructors, but that condition in enable_if_t
-  // is different, so that either one is chosen, thanks to SFINAE.
-  template <typename U,
-            typename std::enable_if<
-                std::is_constructible<T, const U&>::value &&
-                    !internal::IsConvertibleFromOptional<T, U>::value &&
-                    std::is_convertible<const U&, T>::value,
-                bool>::type = false>
-  Optional(const Optional<U>& other) : internal::OptionalBase<T>(other) {}
-
-  template <typename U,
-            typename std::enable_if<
-                std::is_constructible<T, const U&>::value &&
-                    !internal::IsConvertibleFromOptional<T, U>::value &&
-                    !std::is_convertible<const U&, T>::value,
-                bool>::type = false>
-  explicit Optional(const Optional<U>& other)
-      : internal::OptionalBase<T>(other) {}
-
-  // Converting move constructor. Similar to converting copy constructor,
-  // declaring two (explicit and non-explicit) constructors.
-  template <typename U,
-            typename std::enable_if<
-                std::is_constructible<T, U&&>::value &&
-                    !internal::IsConvertibleFromOptional<T, U>::value &&
-                    std::is_convertible<U&&, T>::value,
-                bool>::type = false>
-  Optional(Optional<U>&& other) : internal::OptionalBase<T>(std::move(other)) {}
-
-  template <typename U,
-            typename std::enable_if<
-                std::is_constructible<T, U&&>::value &&
-                    !internal::IsConvertibleFromOptional<T, U>::value &&
-                    !std::is_convertible<U&&, T>::value,
-                bool>::type = false>
-  explicit Optional(Optional<U>&& other)
-      : internal::OptionalBase<T>(std::move(other)) {}
-
-  template <class... Args>
-  constexpr explicit Optional(in_place_t, Args&&... args)
-      : internal::OptionalBase<T>(in_place, std::forward<Args>(args)...) {}
-
-  template <class U,
-            class... Args,
-            class = typename std::enable_if<
-                std::is_constructible<value_type,
-                                      std::initializer_list<U>&,
-                                      Args...>::value>::type>
-  constexpr explicit Optional(in_place_t,
-                              std::initializer_list<U> il,
-                              Args&&... args)
-      : internal::OptionalBase<T>(in_place, il, std::forward<Args>(args)...) {}
-
-  // Forward value constructor. Similar to converting constructors,
-  // conditionally explicit.
-  template <
-      typename U = value_type,
-      typename std::enable_if<
-          std::is_constructible<T, U&&>::value &&
-              !std::is_same<internal::RemoveCvRefT<U>, in_place_t>::value &&
-              !std::is_same<internal::RemoveCvRefT<U>, Optional<T>>::value &&
-              std::is_convertible<U&&, T>::value,
-          bool>::type = false>
-  constexpr Optional(U&& value)
-      : internal::OptionalBase<T>(in_place, std::forward<U>(value)) {}
-
-  template <
-      typename U = value_type,
-      typename std::enable_if<
-          std::is_constructible<T, U&&>::value &&
-              !std::is_same<internal::RemoveCvRefT<U>, in_place_t>::value &&
-              !std::is_same<internal::RemoveCvRefT<U>, Optional<T>>::value &&
-              !std::is_convertible<U&&, T>::value,
-          bool>::type = false>
-  constexpr explicit Optional(U&& value)
-      : internal::OptionalBase<T>(in_place, std::forward<U>(value)) {}
-
-  ~Optional() = default;
-
-  // Defer copy-/move- assign operator implementation to OptionalBase.
-  Optional& operator=(const Optional& other) = default;
-  Optional& operator=(Optional&& other) noexcept(
-      std::is_nothrow_move_assignable<T>::value&&
-          std::is_nothrow_move_constructible<T>::value) = default;
-
-  Optional& operator=(nullopt_t) {
-    FreeIfNeeded();
-    return *this;
-  }
-
-  // Perfect-forwarded assignment.
-  template <typename U>
-  typename std::enable_if<
-      !std::is_same<internal::RemoveCvRefT<U>, Optional<T>>::value &&
-          std::is_constructible<T, U>::value &&
-          std::is_assignable<T&, U>::value &&
-          (!std::is_scalar<T>::value ||
-           !std::is_same<typename std::decay<U>::type, T>::value),
-      Optional&>::type
-  operator=(U&& value) {
-    InitOrAssign(std::forward<U>(value));
-    return *this;
-  }
-
-  // Copy assign the state of other.
-  template <typename U>
-  typename std::enable_if<!internal::IsAssignableFromOptional<T, U>::value &&
-                              std::is_constructible<T, const U&>::value &&
-                              std::is_assignable<T&, const U&>::value,
-                          Optional&>::type
-  operator=(const Optional<U>& other) {
-    CopyAssign(other);
-    return *this;
-  }
-
-  // Move assign the state of other.
-  template <typename U>
-  typename std::enable_if<!internal::IsAssignableFromOptional<T, U>::value &&
-                              std::is_constructible<T, U>::value &&
-                              std::is_assignable<T&, U>::value,
-                          Optional&>::type
-  operator=(Optional<U>&& other) {
-    MoveAssign(std::move(other));
-    return *this;
-  }
-
-  const T* operator->() const {
-    PERFETTO_DCHECK(storage_.is_populated_);
-    return &storage_.value_;
-  }
-
-  T* operator->() {
-    PERFETTO_DCHECK(storage_.is_populated_);
-    return &storage_.value_;
-  }
-
-  const T& operator*() const& {
-    PERFETTO_DCHECK(storage_.is_populated_);
-    return storage_.value_;
-  }
-
-  T& operator*() & {
-    PERFETTO_DCHECK(storage_.is_populated_);
-    return storage_.value_;
-  }
-
-  const T&& operator*() const&& {
-    PERFETTO_DCHECK(storage_.is_populated_);
-    return std::move(storage_.value_);
-  }
-
-  T&& operator*() && {
-    PERFETTO_DCHECK(storage_.is_populated_);
-    return std::move(storage_.value_);
-  }
-
-  constexpr explicit operator bool() const { return storage_.is_populated_; }
-
-  constexpr bool has_value() const { return storage_.is_populated_; }
-
-  T& value() & {
-    PERFETTO_CHECK(storage_.is_populated_);
-    return storage_.value_;
-  }
-
-  const T& value() const& {
-    PERFETTO_CHECK(storage_.is_populated_);
-    return storage_.value_;
-  }
-
-  T&& value() && {
-    PERFETTO_CHECK(storage_.is_populated_);
-    return std::move(storage_.value_);
-  }
-
-  const T&& value() const&& {
-    PERFETTO_CHECK(storage_.is_populated_);
-    return std::move(storage_.value_);
-  }
-
-  template <class U>
-  constexpr T value_or(U&& default_value) const& {
-    static_assert(std::is_convertible<U, T>::value,
-                  "U must be convertible to T");
-    return storage_.is_populated_
-               ? storage_.value_
-               : static_cast<T>(std::forward<U>(default_value));
-  }
-
-  template <class U>
-  T value_or(U&& default_value) && {
-    static_assert(std::is_convertible<U, T>::value,
-                  "U must be convertible to T");
-    return storage_.is_populated_
-               ? std::move(storage_.value_)
-               : static_cast<T>(std::forward<U>(default_value));
-  }
-
-  void swap(Optional& other) {
-    if (!storage_.is_populated_ && !other.storage_.is_populated_)
-      return;
-
-    if (storage_.is_populated_ != other.storage_.is_populated_) {
-      if (storage_.is_populated_) {
-        other.storage_.Init(std::move(storage_.value_));
-        FreeIfNeeded();
-      } else {
-        storage_.Init(std::move(other.storage_.value_));
-        other.FreeIfNeeded();
-      }
-      return;
-    }
-
-    PERFETTO_DCHECK(storage_.is_populated_ && other.storage_.is_populated_);
-    using std::swap;
-    swap(**this, *other);
-  }
-
-  void reset() { FreeIfNeeded(); }
-
-  template <class... Args>
-  T& emplace(Args&&... args) {
-    FreeIfNeeded();
-    storage_.Init(std::forward<Args>(args)...);
-    return storage_.value_;
-  }
-
-  template <class U, class... Args>
-  typename std::enable_if<
-      std::is_constructible<T, std::initializer_list<U>&, Args&&...>::value,
-      T&>::type
-  emplace(std::initializer_list<U> il, Args&&... args) {
-    FreeIfNeeded();
-    storage_.Init(il, std::forward<Args>(args)...);
-    return storage_.value_;
-  }
-
- private:
-  // Accessing template base class's protected member needs explicit
-  // declaration to do so.
-  using internal::OptionalBase<T>::CopyAssign;
-  using internal::OptionalBase<T>::FreeIfNeeded;
-  using internal::OptionalBase<T>::InitOrAssign;
-  using internal::OptionalBase<T>::MoveAssign;
-  using internal::OptionalBase<T>::storage_;
-};
-
-// Here after defines comparation operators. The definition follows
-// http://en.cppreference.com/w/cpp/utility/optional/operator_cmp
-// while bool() casting is replaced by has_value() to meet the chromium
-// style guide.
-template <class T, class U>
-bool operator==(const Optional<T>& lhs, const Optional<U>& rhs) {
-  if (lhs.has_value() != rhs.has_value())
-    return false;
-  if (!lhs.has_value())
-    return true;
-  return *lhs == *rhs;
-}
-
-template <class T, class U>
-bool operator!=(const Optional<T>& lhs, const Optional<U>& rhs) {
-  if (lhs.has_value() != rhs.has_value())
-    return true;
-  if (!lhs.has_value())
-    return false;
-  return *lhs != *rhs;
-}
-
-template <class T, class U>
-bool operator<(const Optional<T>& lhs, const Optional<U>& rhs) {
-  if (!rhs.has_value())
-    return false;
-  if (!lhs.has_value())
-    return true;
-  return *lhs < *rhs;
-}
-
-template <class T, class U>
-bool operator<=(const Optional<T>& lhs, const Optional<U>& rhs) {
-  if (!lhs.has_value())
-    return true;
-  if (!rhs.has_value())
-    return false;
-  return *lhs <= *rhs;
-}
-
-template <class T, class U>
-bool operator>(const Optional<T>& lhs, const Optional<U>& rhs) {
-  if (!lhs.has_value())
-    return false;
-  if (!rhs.has_value())
-    return true;
-  return *lhs > *rhs;
-}
-
-template <class T, class U>
-bool operator>=(const Optional<T>& lhs, const Optional<U>& rhs) {
-  if (!rhs.has_value())
-    return true;
-  if (!lhs.has_value())
-    return false;
-  return *lhs >= *rhs;
-}
-
-template <class T>
-constexpr bool operator==(const Optional<T>& opt, nullopt_t) {
-  return !opt;
-}
-
-template <class T>
-constexpr bool operator==(nullopt_t, const Optional<T>& opt) {
-  return !opt;
-}
-
-template <class T>
-constexpr bool operator!=(const Optional<T>& opt, nullopt_t) {
-  return opt.has_value();
-}
-
-template <class T>
-constexpr bool operator!=(nullopt_t, const Optional<T>& opt) {
-  return opt.has_value();
-}
-
-template <class T>
-constexpr bool operator<(const Optional<T>&, nullopt_t) {
-  return false;
-}
-
-template <class T>
-constexpr bool operator<(nullopt_t, const Optional<T>& opt) {
-  return opt.has_value();
-}
-
-template <class T>
-constexpr bool operator<=(const Optional<T>& opt, nullopt_t) {
-  return !opt;
-}
-
-template <class T>
-constexpr bool operator<=(nullopt_t, const Optional<T>&) {
-  return true;
-}
-
-template <class T>
-constexpr bool operator>(const Optional<T>& opt, nullopt_t) {
-  return opt.has_value();
-}
-
-template <class T>
-constexpr bool operator>(nullopt_t, const Optional<T>&) {
-  return false;
-}
-
-template <class T>
-constexpr bool operator>=(const Optional<T>&, nullopt_t) {
-  return true;
-}
-
-template <class T>
-constexpr bool operator>=(nullopt_t, const Optional<T>& opt) {
-  return !opt;
-}
-
-template <class T, class U>
-constexpr bool operator==(const Optional<T>& opt, const U& value) {
-  return opt.has_value() ? *opt == value : false;
-}
-
-template <class T, class U>
-constexpr bool operator==(const U& value, const Optional<T>& opt) {
-  return opt.has_value() ? value == *opt : false;
-}
-
-template <class T, class U>
-constexpr bool operator!=(const Optional<T>& opt, const U& value) {
-  return opt.has_value() ? *opt != value : true;
-}
-
-template <class T, class U>
-constexpr bool operator!=(const U& value, const Optional<T>& opt) {
-  return opt.has_value() ? value != *opt : true;
-}
-
-template <class T, class U>
-constexpr bool operator<(const Optional<T>& opt, const U& value) {
-  return opt.has_value() ? *opt < value : true;
-}
-
-template <class T, class U>
-constexpr bool operator<(const U& value, const Optional<T>& opt) {
-  return opt.has_value() ? value < *opt : false;
-}
-
-template <class T, class U>
-constexpr bool operator<=(const Optional<T>& opt, const U& value) {
-  return opt.has_value() ? *opt <= value : true;
-}
-
-template <class T, class U>
-constexpr bool operator<=(const U& value, const Optional<T>& opt) {
-  return opt.has_value() ? value <= *opt : false;
-}
-
-template <class T, class U>
-constexpr bool operator>(const Optional<T>& opt, const U& value) {
-  return opt.has_value() ? *opt > value : false;
-}
-
-template <class T, class U>
-constexpr bool operator>(const U& value, const Optional<T>& opt) {
-  return opt.has_value() ? value > *opt : true;
-}
-
-template <class T, class U>
-constexpr bool operator>=(const Optional<T>& opt, const U& value) {
-  return opt.has_value() ? *opt >= value : false;
-}
-
-template <class T, class U>
-constexpr bool operator>=(const U& value, const Optional<T>& opt) {
-  return opt.has_value() ? value >= *opt : true;
-}
-
-template <class T>
-constexpr Optional<typename std::decay<T>::type> make_optional(T&& value) {
-  return Optional<typename std::decay<T>::type>(std::forward<T>(value));
-}
-
-template <class T, class... Args>
-constexpr Optional<T> make_optional(Args&&... args) {
-  return Optional<T>(in_place, std::forward<Args>(args)...);
-}
-
-template <class T, class U, class... Args>
-constexpr Optional<T> make_optional(std::initializer_list<U> il,
-                                    Args&&... args) {
-  return Optional<T>(in_place, il, std::forward<Args>(args)...);
-}
-
-// Partial specialization for a function template is not allowed. Also, it is
-// not allowed to add overload function to std namespace, while it is allowed
-// to specialize the template in std. Thus, swap() (kind of) overloading is
-// defined in base namespace, instead.
-template <class T>
-typename std::enable_if<std::is_move_constructible<T>::value &&
-                        internal::IsSwappable<T>::value>::type
-swap(Optional<T>& lhs, Optional<T>& rhs) {
-  lhs.swap(rhs);
-}
-
-}  // namespace base
-}  // namespace perfetto
-
-template <class T>
-struct std::hash<perfetto::base::Optional<T>> {
-  size_t operator()(const perfetto::base::Optional<T>& opt) const {
-    return opt == perfetto::base::nullopt ? 0 : std::hash<T>()(*opt);
-  }
-};
-
-#endif  // INCLUDE_PERFETTO_EXT_BASE_OPTIONAL_H_
-// gen_amalgamated begin header: include/perfetto/ext/base/string_view.h
-// gen_amalgamated begin header: include/perfetto/ext/base/hash.h
-/*
- * Copyright (C) 2019 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#ifndef INCLUDE_PERFETTO_EXT_BASE_HASH_H_
-#define INCLUDE_PERFETTO_EXT_BASE_HASH_H_
-
-#include <stddef.h>
-#include <stdint.h>
-#include <type_traits>
-
-namespace perfetto {
-namespace base {
-
-// A helper class which computes a 64-bit hash of the input data.
-// The algorithm used is FNV-1a as it is fast and easy to implement and has
-// relatively few collisions.
-// WARNING: This hash function should not be used for any cryptographic purpose.
-class Hash {
- public:
-  // Creates an empty hash object
-  Hash() {}
-
-  // Hashes a numeric value.
-  template <
-      typename T,
-      typename std::enable_if<std::is_arithmetic<T>::value, bool>::type = true>
-  void Update(T data) {
-    Update(reinterpret_cast<const char*>(&data), sizeof(data));
-  }
-
-  // Hashes a byte array.
-  void Update(const char* data, size_t size) {
-    for (size_t i = 0; i < size; i++) {
-      result_ ^= static_cast<uint8_t>(data[i]);
-      result_ *= kFnv1a64Prime;
-    }
-  }
-
-  uint64_t digest() { return result_; }
-
- private:
-  static constexpr uint64_t kFnv1a64OffsetBasis = 0xcbf29ce484222325;
-  static constexpr uint64_t kFnv1a64Prime = 0x100000001b3;
-
-  uint64_t result_ = kFnv1a64OffsetBasis;
-};
-
-}  // namespace base
-}  // namespace perfetto
-
-#endif  // INCLUDE_PERFETTO_EXT_BASE_HASH_H_
-/*
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#ifndef INCLUDE_PERFETTO_EXT_BASE_STRING_VIEW_H_
-#define INCLUDE_PERFETTO_EXT_BASE_STRING_VIEW_H_
-
-#include <string.h>
-
-#include <algorithm>
-#include <string>
-
-// gen_amalgamated expanded: #include "perfetto/base/build_config.h"
-// gen_amalgamated expanded: #include "perfetto/base/logging.h"
-// gen_amalgamated expanded: #include "perfetto/ext/base/hash.h"
-
-namespace perfetto {
-namespace base {
-
-// A string-like object that refers to a non-owned piece of memory.
-// Strings are internally NOT null terminated.
-class StringView {
- public:
-  static constexpr size_t npos = static_cast<size_t>(-1);
-
-  StringView() : data_(nullptr), size_(0) {}
-  StringView(const StringView&) = default;
-  StringView& operator=(const StringView&) = default;
-  StringView(const char* data, size_t size) : data_(data), size_(size) {
-    PERFETTO_DCHECK(size == 0 || data != nullptr);
-  }
-
-  // Allow implicit conversion from any class that has a |data| and |size| field
-  // and has the kConvertibleToStringView trait (e.g., protozero::ConstChars).
-  template <typename T, typename = std::enable_if<T::kConvertibleToStringView>>
-  StringView(const T& x) : StringView(x.data, x.size) {
-    PERFETTO_DCHECK(x.size == 0 || x.data != nullptr);
-  }
-
-  // Creates a StringView from a null-terminated C string.
-  // Deliberately not "explicit".
-  StringView(const char* cstr) : data_(cstr), size_(strlen(cstr)) {
-    PERFETTO_DCHECK(cstr != nullptr);
-  }
-
-  // This instead has to be explicit, as creating a StringView out of a
-  // std::string can be subtle.
-  explicit StringView(const std::string& str)
-      : data_(str.data()), size_(str.size()) {}
-
-  bool empty() const { return size_ == 0; }
-  size_t size() const { return size_; }
-  const char* data() const { return data_; }
-  const char* begin() const { return data_; }
-  const char* end() const { return data_ + size_; }
-
-  char at(size_t pos) const {
-    PERFETTO_DCHECK(pos < size_);
-    return data_[pos];
-  }
-
-  size_t find(char c, size_t start_pos = 0) const {
-    for (size_t i = start_pos; i < size_; ++i) {
-      if (data_[i] == c)
-        return i;
-    }
-    return npos;
-  }
-
-  size_t find(const StringView& str, size_t start_pos = 0) const {
-    if (start_pos > size())
-      return npos;
-    auto it = std::search(begin() + start_pos, end(), str.begin(), str.end());
-    size_t pos = static_cast<size_t>(it - begin());
-    return pos + str.size() <= size() ? pos : npos;
-  }
-
-  size_t find(const char* str, size_t start_pos = 0) const {
-    return find(StringView(str), start_pos);
-  }
-
-  size_t rfind(char c) const {
-    for (size_t i = size_; i > 0; --i) {
-      if (data_[i - 1] == c)
-        return i - 1;
-    }
-    return npos;
-  }
-
-  StringView substr(size_t pos, size_t count = npos) const {
-    if (pos >= size_)
-      return StringView("", 0);
-    size_t rcount = std::min(count, size_ - pos);
-    return StringView(data_ + pos, rcount);
-  }
-
-  bool CaseInsensitiveEq(const StringView& other) {
-    if (size() != other.size())
-      return false;
-    if (size() == 0)
-      return true;
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-    return _strnicmp(data(), other.data(), size()) == 0;
-#else
-    return strncasecmp(data(), other.data(), size()) == 0;
-#endif
-  }
-
-  bool StartsWith(const StringView& other) {
-    if (other.size() == 0)
-      return true;
-    if (size() == 0)
-      return false;
-    if (other.size() > size())
-      return false;
-    for (uint32_t i = 0; i < other.size(); ++i) {
-      if (at(i) != other.at(i))
-        return false;
-    }
-    return true;
-  }
-
-  std::string ToStdString() const {
-    return size_ == 0 ? "" : std::string(data_, size_);
-  }
-
-  uint64_t Hash() const {
-    base::Hash hasher;
-    hasher.Update(data_, size_);
-    return hasher.digest();
-  }
-
- private:
-  const char* data_ = nullptr;
-  size_t size_ = 0;
-};
-
-inline bool operator==(const StringView& x, const StringView& y) {
-  if (x.size() != y.size())
-    return false;
-  if (x.size() == 0)
-    return true;
-  return memcmp(x.data(), y.data(), x.size()) == 0;
-}
-
-inline bool operator!=(const StringView& x, const StringView& y) {
-  return !(x == y);
-}
-
-inline bool operator<(const StringView& x, const StringView& y) {
-  auto size = std::min(x.size(), y.size());
-  if (size == 0)
-    return x.size() < y.size();
-  int result = memcmp(x.data(), y.data(), size);
-  return result < 0 || (result == 0 && x.size() < y.size());
-}
-
-inline bool operator>=(const StringView& x, const StringView& y) {
-  return !(x < y);
-}
-
-inline bool operator>(const StringView& x, const StringView& y) {
-  return y < x;
-}
-
-inline bool operator<=(const StringView& x, const StringView& y) {
-  return !(y < x);
-}
-
-}  // namespace base
-}  // namespace perfetto
-
-template <>
-struct std::hash<::perfetto::base::StringView> {
-  size_t operator()(const ::perfetto::base::StringView& sv) const {
-    return static_cast<size_t>(sv.Hash());
-  }
-};
-
-#endif  // INCLUDE_PERFETTO_EXT_BASE_STRING_VIEW_H_
-/*
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#ifndef INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
-#define INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
-
-#include <stdlib.h>
-
-#include <cinttypes>
-#include <string>
-#include <vector>
-
-// gen_amalgamated expanded: #include "perfetto/ext/base/optional.h"
-// gen_amalgamated expanded: #include "perfetto/ext/base/string_view.h"
-
-namespace perfetto {
-namespace base {
-
-std::string QuoteAndEscapeControlCodes(const std::string& raw);
-
-inline char Lowercase(char c) {
-  return ('A' <= c && c <= 'Z') ? static_cast<char>(c - ('A' - 'a')) : c;
-}
-
-inline char Uppercase(char c) {
-  return ('a' <= c && c <= 'z') ? static_cast<char>(c + ('A' - 'a')) : c;
-}
-
-inline Optional<uint32_t> CStringToUInt32(const char* s, int base = 10) {
-  char* endptr = nullptr;
-  auto value = static_cast<uint32_t>(strtoul(s, &endptr, base));
-  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
-}
-
-inline Optional<int32_t> CStringToInt32(const char* s, int base = 10) {
-  char* endptr = nullptr;
-  auto value = static_cast<int32_t>(strtol(s, &endptr, base));
-  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
-}
-
-// Note: it saturates to 7fffffffffffffff if parsing a hex number >= 0x8000...
-inline Optional<int64_t> CStringToInt64(const char* s, int base = 10) {
-  char* endptr = nullptr;
-  auto value = static_cast<int64_t>(strtoll(s, &endptr, base));
-  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
-}
-
-inline Optional<uint64_t> CStringToUInt64(const char* s, int base = 10) {
-  char* endptr = nullptr;
-  auto value = static_cast<uint64_t>(strtoull(s, &endptr, base));
-  return (*s && !*endptr) ? base::make_optional(value) : base::nullopt;
-}
-
-double StrToD(const char* nptr, char** endptr);
-
-inline Optional<double> CStringToDouble(const char* s) {
-  char* endptr = nullptr;
-  double value = StrToD(s, &endptr);
-  Optional<double> result(base::nullopt);
-  if (*s != '\0' && *endptr == '\0')
-    result = value;
-  return result;
-}
-
-inline Optional<uint32_t> StringToUInt32(const std::string& s, int base = 10) {
-  return CStringToUInt32(s.c_str(), base);
-}
-
-inline Optional<int32_t> StringToInt32(const std::string& s, int base = 10) {
-  return CStringToInt32(s.c_str(), base);
-}
-
-inline Optional<uint64_t> StringToUInt64(const std::string& s, int base = 10) {
-  return CStringToUInt64(s.c_str(), base);
-}
-
-inline Optional<int64_t> StringToInt64(const std::string& s, int base = 10) {
-  return CStringToInt64(s.c_str(), base);
-}
-
-inline Optional<double> StringToDouble(const std::string& s) {
-  return CStringToDouble(s.c_str());
-}
-
-bool StartsWith(const std::string& str, const std::string& prefix);
-bool EndsWith(const std::string& str, const std::string& suffix);
-bool Contains(const std::string& haystack, const std::string& needle);
-bool Contains(const std::string& haystack, char needle);
-size_t Find(const StringView& needle, const StringView& haystack);
-bool CaseInsensitiveEqual(const std::string& first, const std::string& second);
-std::string Join(const std::vector<std::string>& parts,
-                 const std::string& delim);
-std::vector<std::string> SplitString(const std::string& text,
-                                     const std::string& delimiter);
-std::string StripPrefix(const std::string& str, const std::string& prefix);
-std::string StripSuffix(const std::string& str, const std::string& suffix);
-std::string ToLower(const std::string& str);
-std::string ToUpper(const std::string& str);
-std::string StripChars(const std::string& str,
-                       const std::string& chars,
-                       char replacement);
-std::string ToHex(const char* data, size_t size);
-inline std::string ToHex(const std::string& s) {
-  return ToHex(s.c_str(), s.size());
-}
-std::string IntToHexString(uint32_t number);
-std::string Uint64ToHexString(uint64_t number);
-std::string Uint64ToHexStringNoPrefix(uint64_t number);
-std::string ReplaceAll(std::string str,
-                       const std::string& to_replace,
-                       const std::string& replacement);
-std::string TrimLeading(const std::string& str);
-std::string Base64Encode(const void* raw, size_t size);
-
-}  // namespace base
-}  // namespace perfetto
-
-#endif  // INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
 /*
  * Copyright (C) 2018 The Android Open Source Project
  *
@@ -4574,15 +5276,18 @@ std::string Base64Encode(const void* raw, size_t size);
 // gen_amalgamated expanded: #include "perfetto/ext/base/string_utils.h"
 
 #include <locale.h>
+#include <stdarg.h>
 #include <string.h>
+
+#include <algorithm>
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
 #include <xlocale.h>
 #endif
 
-#include <algorithm>
 #include <cinttypes>
 
+// gen_amalgamated expanded: #include "perfetto/base/compiler.h"
 // gen_amalgamated expanded: #include "perfetto/base/logging.h"
 
 namespace perfetto {
@@ -4605,44 +5310,15 @@ double StrToD(const char* nptr, char** endptr) {
 #endif
 }
 
-std::string QuoteAndEscapeControlCodes(const std::string& raw) {
-  std::string ret;
-  for (auto it = raw.cbegin(); it != raw.cend(); it++) {
-    switch (*it) {
-      case '\\':
-        ret += "\\\\";
-        break;
-      case '"':
-        ret += "\\\"";
-        break;
-      case '/':
-        ret += "\\/";
-        break;
-      case '\b':
-        ret += "\\b";
-        break;
-      case '\f':
-        ret += "\\f";
-        break;
-      case '\n':
-        ret += "\\n";
-        break;
-      case '\r':
-        ret += "\\r";
-        break;
-      case '\t':
-        ret += "\\t";
-        break;
-      default:
-        ret += *it;
-        break;
-    }
-  }
-  return '"' + ret + '"';
-}
-
 bool StartsWith(const std::string& str, const std::string& prefix) {
   return str.compare(0, prefix.length(), prefix) == 0;
+}
+
+bool StartsWithAny(const std::string& str,
+                   const std::vector<std::string>& prefixes) {
+  return std::any_of(
+      prefixes.begin(), prefixes.end(),
+      [&str](const std::string& prefix) { return StartsWith(str, prefix); });
 }
 
 bool EndsWith(const std::string& str, const std::string& suffix) {
@@ -4752,9 +5428,8 @@ std::string IntToHexString(uint32_t number) {
   size_t max_size = 11;  // Max uint32 is 0xFFFFFFFF + 1 for null byte.
   std::string buf;
   buf.resize(max_size);
-  auto final_size = snprintf(&buf[0], max_size, "0x%02x", number);
-  PERFETTO_DCHECK(final_size >= 0);
-  buf.resize(static_cast<size_t>(final_size));  // Cuts off the final null byte.
+  size_t final_len = SprintfTrunc(&buf[0], max_size, "0x%02x", number);
+  buf.resize(static_cast<size_t>(final_len));  // Cuts off the final null byte.
   return buf;
 }
 
@@ -4766,9 +5441,8 @@ std::string Uint64ToHexStringNoPrefix(uint64_t number) {
   size_t max_size = 17;  // Max uint64 is FFFFFFFFFFFFFFFF + 1 for null byte.
   std::string buf;
   buf.resize(max_size);
-  auto final_size = snprintf(&buf[0], max_size, "%" PRIx64 "", number);
-  PERFETTO_DCHECK(final_size >= 0);
-  buf.resize(static_cast<size_t>(final_size));  // Cuts off the final null byte.
+  size_t final_len = SprintfTrunc(&buf[0], max_size, "%" PRIx64 "", number);
+  buf.resize(static_cast<size_t>(final_len));  // Cuts off the final null byte.
   return buf;
 }
 
@@ -4836,6 +5510,34 @@ std::string Base64Encode(const void* raw, size_t size) {
     out.push_back('=');  // Emit padding.
   }
   return out;
+}
+
+size_t SprintfTrunc(char* dst, size_t dst_size, const char* fmt, ...) {
+  if (PERFETTO_UNLIKELY(dst_size) == 0)
+    return 0;
+
+  va_list args;
+  va_start(args, fmt);
+  int src_size = vsnprintf(dst, dst_size, fmt, args);
+  va_end(args);
+
+  if (PERFETTO_UNLIKELY(src_size) <= 0) {
+    dst[0] = '\0';
+    return 0;
+  }
+
+  size_t res;
+  if (PERFETTO_LIKELY(src_size < static_cast<int>(dst_size))) {
+    // Most common case.
+    res = static_cast<size_t>(src_size);
+  } else {
+    // Truncation case.
+    res = dst_size - 1;
+  }
+
+  PERFETTO_DCHECK(res < dst_size);
+  PERFETTO_DCHECK(dst[res] == '\0');
+  return res;
 }
 
 }  // namespace base
@@ -5441,9 +6143,9 @@ std::string GetCurExecutableDir() {
   auto path = GetCurExecutablePath();
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   // Paths in Windows can have both kinds of slashes (mingw vs msvc).
-  path = path.substr(0, path.find_last_of("\\"));
+  path = path.substr(0, path.find_last_of('\\'));
 #endif
-  path = path.substr(0, path.find_last_of("/"));
+  path = path.substr(0, path.find_last_of('/'));
   return path;
 }
 
@@ -5637,8 +6339,8 @@ const char* GetVersionString();
 #ifndef GEN_PERFETTO_VERSION_GEN_H_
 #define GEN_PERFETTO_VERSION_GEN_H_
 
-#define PERFETTO_VERSION_STRING() "v18.0"
-#define PERFETTO_VERSION_SCM_REVISION() "ef682fd91263e8e05e1b177649aeea3f18f37d79"
+#define PERFETTO_VERSION_STRING() "v21.0-95b1085d6"
+#define PERFETTO_VERSION_SCM_REVISION() "95b1085d65e5ebf0ea40b84d13b5ea7b25c350ae"
 
 #endif  // GEN_PERFETTO_VERSION_GEN_H_
 /*
@@ -5833,6 +6535,8 @@ void WaitableEvent::Notify() {
 namespace perfetto {
 namespace base {
 
+enum class WatchdogCrashReason;  // Defined in watchdog.h.
+
 class Watchdog {
  public:
   class Timer {
@@ -5846,7 +6550,9 @@ class Watchdog {
     static Watchdog* watchdog = new Watchdog();
     return watchdog;
   }
-  Timer CreateFatalTimer(uint32_t /*ms*/) { return Timer(); }
+  Timer CreateFatalTimer(uint32_t /*ms*/, WatchdogCrashReason) {
+    return Timer();
+  }
   void Start() {}
   void SetMemoryLimit(uint64_t /*bytes*/, uint32_t /*window_ms*/) {}
   void SetCpuLimit(uint32_t /*percentage*/, uint32_t /*window_ms*/) {}
@@ -5890,6 +6596,15 @@ class Watchdog {
 namespace perfetto {
 namespace base {
 
+// Used only to add more details to crash reporting.
+enum class WatchdogCrashReason {
+  kUnspecified = 0,
+  kCpuGuardrail = 1,
+  kMemGuardrail = 2,
+  kTaskRunnerHung = 3,
+  kTraceDidntStop = 4,
+};
+
 // Make the limits more relaxed on desktop, where multi-GB traces are likely.
 // Multi-GB traces can take bursts of cpu time to write into disk at the end of
 // the trace.
@@ -5911,8 +6626,8 @@ inline void RunTaskWithWatchdogGuard(const std::function<void()>& task) {
   // program suicides.
   constexpr int64_t kWatchdogMillis = 30000;  // 30s
 
-  Watchdog::Timer handle =
-      base::Watchdog::GetInstance()->CreateFatalTimer(kWatchdogMillis);
+  Watchdog::Timer handle = base::Watchdog::GetInstance()->CreateFatalTimer(
+      kWatchdogMillis, WatchdogCrashReason::kTaskRunnerHung);
   task();
 
   // Suppress unused variable warnings in the client library amalgamated build.
@@ -5947,9 +6662,15 @@ inline void RunTaskWithWatchdogGuard(const std::function<void()>& task) {
 #if PERFETTO_BUILDFLAG(PERFETTO_WATCHDOG)
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <sys/syscall.h>
+#include <sys/timerfd.h>
+#include <unistd.h>
 
+#include <algorithm>
 #include <cinttypes>
 #include <fstream>
 #include <thread>
@@ -5957,6 +6678,8 @@ inline void RunTaskWithWatchdogGuard(const std::function<void()>& task) {
 // gen_amalgamated expanded: #include "perfetto/base/build_config.h"
 // gen_amalgamated expanded: #include "perfetto/base/logging.h"
 // gen_amalgamated expanded: #include "perfetto/base/thread_utils.h"
+// gen_amalgamated expanded: #include "perfetto/base/time.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/crash_keys.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/file_utils.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/scoped_file.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/utils.h"
@@ -5968,6 +6691,8 @@ namespace {
 
 constexpr uint32_t kDefaultPollingInterval = 30 * 1000;
 
+base::CrashKey g_crash_key_reason("wdog_reason");
+
 bool IsMultipleOf(uint32_t number, uint32_t divisor) {
   return number >= divisor && number % divisor == 0;
 }
@@ -5978,7 +6703,6 @@ double MeanForArray(const uint64_t array[], size_t size) {
     total += array[i];
   }
   return static_cast<double>(total / size);
-
 }
 
 }  //  namespace
@@ -6019,7 +6743,16 @@ Watchdog::~Watchdog() {
   }
   PERFETTO_DCHECK(enabled_);
   enabled_ = false;
-  exit_signal_.notify_one();
+
+  // Rearm the timer to 1ns from now. This will cause the watchdog thread to
+  // wakeup from the poll() and see |enabled_| == false.
+  // This code path is used only in tests. In production code the watchdog is
+  // a singleton and is never destroyed.
+  struct itimerspec ts {};
+  ts.it_value.tv_sec = 0;
+  ts.it_value.tv_nsec = 1;
+  timerfd_settime(*timer_fd_, /*flags=*/0, &ts, nullptr);
+
   thread_.join();
 }
 
@@ -6028,11 +6761,49 @@ Watchdog* Watchdog::GetInstance() {
   return watchdog;
 }
 
-Watchdog::Timer Watchdog::CreateFatalTimer(uint32_t ms) {
+// Can be called from any thread.
+Watchdog::Timer Watchdog::CreateFatalTimer(uint32_t ms,
+                                           WatchdogCrashReason crash_reason) {
   if (!enabled_.load(std::memory_order_relaxed))
-    return Watchdog::Timer(0);
+    return Watchdog::Timer(this, 0, crash_reason);
 
-  return Watchdog::Timer(ms);
+  return Watchdog::Timer(this, ms, crash_reason);
+}
+
+// Can be called from any thread.
+void Watchdog::AddFatalTimer(TimerData timer) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  timers_.emplace_back(std::move(timer));
+  RearmTimerFd_Locked();
+}
+
+// Can be called from any thread.
+void Watchdog::RemoveFatalTimer(TimerData timer) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  for (auto it = timers_.begin(); it != timers_.end(); it++) {
+    if (*it == timer) {
+      timers_.erase(it);
+      break;  // Remove only one. Doesn't matter which one.
+    }
+  }
+  RearmTimerFd_Locked();
+}
+
+void Watchdog::RearmTimerFd_Locked() {
+  if (!enabled_)
+    return;
+  auto it = std::min_element(timers_.begin(), timers_.end());
+
+  // We use one timerfd to handle all the oustanding |timers_|. Keep it armed
+  // to the task expiring soonest.
+  struct itimerspec ts {};
+  if (it != timers_.end()) {
+    ts.it_value = ToPosixTimespec(it->deadline);
+  }
+  // If |timers_| is empty (it == end()) |ts.it_value| will remain
+  // zero-initialized and that will disarm the timer in the call below.
+  int res = timerfd_settime(*timer_fd_, TFD_TIMER_ABSTIME, &ts, nullptr);
+  PERFETTO_DCHECK(res == 0);
 }
 
 void Watchdog::Start() {
@@ -6045,7 +6816,15 @@ void Watchdog::Start() {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
     // Kick the thread to start running but only on Android or Linux.
+    timer_fd_.reset(
+        timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK));
+    if (!timer_fd_) {
+      PERFETTO_PLOG(
+          "timerfd_create failed, the Perfetto watchdog is not available");
+      return;
+    }
     enabled_ = true;
+    RearmTimerFd_Locked();  // Deal with timers created before Start().
     thread_ = std::thread(&Watchdog::ThreadMain, this);
 #endif
   }
@@ -6081,49 +6860,134 @@ void Watchdog::ThreadMain() {
     return;
   }
 
-  std::unique_lock<std::mutex> guard(mutex_);
+  PERFETTO_DCHECK(timer_fd_);
+
+  constexpr uint8_t kFdCount = 1;
+  struct pollfd fds[kFdCount]{};
+  fds[0].fd = *timer_fd_;
+  fds[0].events = POLLIN;
+
   for (;;) {
-    exit_signal_.wait_for(guard,
-                          std::chrono::milliseconds(polling_interval_ms_));
+    // We use the poll() timeout to drive the periodic ticks for the cpu/memory
+    // checks. The only other case when the poll() unblocks is when we crash
+    // (or have to quit via enabled_ == false, but that happens only in tests).
+    auto ret = poll(fds, kFdCount, static_cast<int>(polling_interval_ms_));
     if (!enabled_)
       return;
-
-    lseek(stat_fd.get(), 0, SEEK_SET);
-
-    ProcStat stat;
-    if (!ReadProcStat(stat_fd.get(), &stat)) {
-      return;
+    if (ret < 0) {
+      if (errno == ENOMEM || errno == EINTR) {
+        // Should happen extremely rarely.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        continue;
+      }
+      PERFETTO_FATAL("watchdog poll() failed");
     }
 
+    // If we get here either:
+    // 1. poll() timed out, in which case we should process cpu/mem guardrails.
+    // 2. A timer expired, in which case we shall crash.
+
+    uint64_t expired = 0;  // Must be exactly 8 bytes.
+    auto res = PERFETTO_EINTR(read(*timer_fd_, &expired, sizeof(expired)));
+    PERFETTO_DCHECK((res < 0 && (errno == EAGAIN)) ||
+                    (res == sizeof(expired) && expired > 0));
+    const auto now = GetWallTimeMs();
+
+    // Check if any of the timers expired.
+    int tid_to_kill = 0;
+    WatchdogCrashReason crash_reason{};
+    std::unique_lock<std::mutex> guard(mutex_);
+    for (const auto& timer : timers_) {
+      if (now >= timer.deadline) {
+        tid_to_kill = timer.thread_id;
+        crash_reason = timer.crash_reason;
+        break;
+      }
+    }
+    guard.unlock();
+
+    if (tid_to_kill)
+      SerializeLogsAndKillThread(tid_to_kill, crash_reason);
+
+    // Check CPU and memory guardrails (if enabled).
+    lseek(stat_fd.get(), 0, SEEK_SET);
+    ProcStat stat;
+    if (!ReadProcStat(stat_fd.get(), &stat))
+      continue;
     uint64_t cpu_time = stat.utime + stat.stime;
     uint64_t rss_bytes =
         static_cast<uint64_t>(stat.rss_pages) * base::GetSysPageSize();
 
-    CheckMemory(rss_bytes);
-    CheckCpu(cpu_time);
+    bool threshold_exceeded = false;
+    guard.lock();
+    if (CheckMemory_Locked(rss_bytes)) {
+      threshold_exceeded = true;
+      crash_reason = WatchdogCrashReason::kMemGuardrail;
+    } else if (CheckCpu_Locked(cpu_time)) {
+      threshold_exceeded = true;
+      crash_reason = WatchdogCrashReason::kCpuGuardrail;
+    }
+    guard.unlock();
+
+    if (threshold_exceeded)
+      SerializeLogsAndKillThread(getpid(), crash_reason);
   }
 }
 
-void Watchdog::CheckMemory(uint64_t rss_bytes) {
-  if (memory_limit_bytes_ == 0)
+void Watchdog::SerializeLogsAndKillThread(int tid,
+                                          WatchdogCrashReason crash_reason) {
+  g_crash_key_reason.Set(static_cast<int>(crash_reason));
+
+  // We are about to die. Serialize the logs into the crash buffer so the
+  // debuggerd crash handler picks them up and attaches to the bugreport.
+  // In the case of a PERFETTO_CHECK/PERFETTO_FATAL this is done in logging.h.
+  // But in the watchdog case, we don't hit that codepath and must do ourselves.
+  MaybeSerializeLastLogsForCrashReporting();
+
+  // Send a SIGABRT to the thread that armed the timer. This is to see the
+  // callstack of the thread that is stuck in a long task rather than the
+  // watchdog thread.
+  if (syscall(__NR_tgkill, getpid(), tid, SIGABRT) < 0) {
+    // At this point the process must die. If for any reason the tgkill doesn't
+    // work (e.g. the thread has disappeared), force a crash from here.
+    abort();
+  }
+
+  if (disable_kill_failsafe_for_testing_)
     return;
+
+  // The tgkill() above will take some milliseconds to cause a crash, as it
+  // involves the kernel to queue the SIGABRT on the target thread (often the
+  // main thread, which is != watchdog thread) and do a scheduling round.
+  // If something goes wrong though (the target thread has signals masked or
+  // is stuck in an uninterruptible+wakekill syscall) force quit from this
+  // thread.
+  std::this_thread::sleep_for(std::chrono::seconds(10));
+  abort();
+}
+
+bool Watchdog::CheckMemory_Locked(uint64_t rss_bytes) {
+  if (memory_limit_bytes_ == 0)
+    return false;
 
   // Add the current stat value to the ring buffer and check that the mean
   // remains under our threshold.
   if (memory_window_bytes_.Push(rss_bytes)) {
-    if (memory_window_bytes_.Mean() > static_cast<double>(memory_limit_bytes_)) {
+    if (memory_window_bytes_.Mean() >
+        static_cast<double>(memory_limit_bytes_)) {
       PERFETTO_ELOG(
           "Memory watchdog trigger. Memory window of %f bytes is above the "
           "%" PRIu64 " bytes limit.",
           memory_window_bytes_.Mean(), memory_limit_bytes_);
-      kill(getpid(), SIGABRT);
+      return true;
     }
   }
+  return false;
 }
 
-void Watchdog::CheckCpu(uint64_t cpu_time) {
+bool Watchdog::CheckCpu_Locked(uint64_t cpu_time) {
   if (cpu_limit_percentage_ == 0)
-    return;
+    return false;
 
   // Add the cpu time to the ring buffer.
   if (cpu_window_time_ticks_.Push(cpu_time)) {
@@ -6141,9 +7005,10 @@ void Watchdog::CheckCpu(uint64_t cpu_time) {
       PERFETTO_ELOG("CPU watchdog trigger. %f%% CPU use is above the %" PRIu32
                     "%% CPU limit.",
                     percentage, cpu_limit_percentage_);
-      kill(getpid(), SIGABRT);
+      return true;
     }
   }
+  return false;
 }
 
 uint32_t Watchdog::WindowTimeForRingBuffer(const WindowedInterval& window) {
@@ -6177,32 +7042,29 @@ void Watchdog::WindowedInterval::Reset(size_t new_size) {
   buffer_.reset(new_size == 0 ? nullptr : new uint64_t[new_size]());
 }
 
-Watchdog::Timer::Timer(uint32_t ms) {
+Watchdog::Timer::Timer(Watchdog* watchdog,
+                       uint32_t ms,
+                       WatchdogCrashReason crash_reason)
+    : watchdog_(watchdog) {
   if (!ms)
     return;  // No-op timer created when the watchdog is disabled.
-
-  struct sigevent sev = {};
-  timer_t timerid;
-  sev.sigev_notify = SIGEV_THREAD_ID;
-  sev._sigev_un._tid = base::GetThreadId();
-  sev.sigev_signo = SIGABRT;
-  PERFETTO_CHECK(timer_create(CLOCK_MONOTONIC, &sev, &timerid) != -1);
-  timerid_ = base::make_optional(timerid);
-  struct itimerspec its = {};
-  its.it_value.tv_sec = ms / 1000;
-  its.it_value.tv_nsec = 1000000L * (ms % 1000);
-  PERFETTO_CHECK(timer_settime(timerid_.value(), 0, &its, nullptr) != -1);
+  timer_data_.deadline = GetWallTimeMs() + std::chrono::milliseconds(ms);
+  timer_data_.thread_id = GetThreadId();
+  timer_data_.crash_reason = crash_reason;
+  PERFETTO_DCHECK(watchdog_);
+  watchdog_->AddFatalTimer(timer_data_);
 }
 
 Watchdog::Timer::~Timer() {
-  if (timerid_) {
-    timer_delete(timerid_.value());
-  }
+  if (timer_data_.deadline.count())
+    watchdog_->RemoveFatalTimer(timer_data_);
 }
 
 Watchdog::Timer::Timer(Timer&& other) noexcept {
-  timerid_ = std::move(other.timerid_);
-  other.timerid_ = base::nullopt;
+  watchdog_ = std::move(other.watchdog_);
+  other.watchdog_ = nullptr;
+  timer_data_ = std::move(other.timer_data_);
+  other.timer_data_ = TimerData();
 }
 
 }  // namespace base
@@ -6453,6 +7315,7 @@ class PERFETTO_EXPORT ThreadTaskRunner : public TaskRunner {
 #include <string>
 
 // gen_amalgamated expanded: #include "perfetto/base/build_config.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_utils.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
@@ -6479,8 +7342,7 @@ namespace base {
 // string.
 inline bool MaybeSetThreadName(const std::string& name) {
   char buf[16] = {};
-  size_t sz = std::min(name.size(), static_cast<size_t>(15));
-  strncpy(buf, name.c_str(), sz);
+  StringCopy(buf, name.c_str(), sizeof(buf));
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
   return pthread_setname_np(buf) == 0;
@@ -8721,17 +9583,26 @@ void TypedProtoDecoderBase::ParseAllFields() {
     res = ParseOneField(cur, end_);
     PERFETTO_DCHECK(res.parse_res != ParseFieldResult::kOk || res.next != cur);
     cur = res.next;
-    if (PERFETTO_UNLIKELY(res.parse_res == ParseFieldResult::kSkip)) {
+    if (PERFETTO_UNLIKELY(res.parse_res == ParseFieldResult::kSkip))
       continue;
-    } else if (PERFETTO_UNLIKELY(res.parse_res == ParseFieldResult::kAbort)) {
+    if (PERFETTO_UNLIKELY(res.parse_res == ParseFieldResult::kAbort))
       break;
-    }
+
     PERFETTO_DCHECK(res.parse_res == ParseFieldResult::kOk);
     PERFETTO_DCHECK(res.field.valid());
     auto field_id = res.field.id();
     if (PERFETTO_UNLIKELY(field_id >= num_fields_))
       continue;
 
+    // There are two reasons why we might want to expand the heap capacity:
+    // 1. We are writing a non-repeated field, which has an id >
+    //    INITIAL_STACK_CAPACITY. In this case ExpandHeapStorage() ensures to
+    //    allocate at least (num_fields_ + 1) slots.
+    // 2. We are writing a repeated field but ran out of capacity.
+    if (PERFETTO_UNLIKELY(field_id >= size_ || size_ >= capacity_))
+      ExpandHeapStorage();
+
+    PERFETTO_DCHECK(field_id < size_);
     Field* fld = &fields_[field_id];
     if (PERFETTO_LIKELY(!fld->valid())) {
       // This is the first time we see this field.
@@ -8746,12 +9617,7 @@ void TypedProtoDecoderBase::ParseAllFields() {
       //    supposed to return the last value of X, not the first one.
       // This is so that the RepeatedFieldIterator will iterate in the right
       // order, see comments on RepeatedFieldIterator.
-      if (PERFETTO_UNLIKELY(size_ >= capacity_)) {
-        ExpandHeapStorage();
-        // ExpandHeapStorage moves fields_ so we need to update the ptr to fld:
-        fld = &fields_[field_id];
-        PERFETTO_DCHECK(size_ < capacity_);
-      }
+      PERFETTO_DCHECK(size_ < capacity_);
       fields_[size_++] = *fld;
       *fld = std::move(res.field);
     }
@@ -8760,17 +9626,31 @@ void TypedProtoDecoderBase::ParseAllFields() {
 }
 
 void TypedProtoDecoderBase::ExpandHeapStorage() {
-  uint32_t new_capacity = capacity_ * 2;
-  PERFETTO_CHECK(new_capacity > size_);
+  // When we expand the heap we must ensure that we have at very last capacity
+  // to deal with all known fields plus at least one repeated field. We go +32
+  // to avoid trivial re-allocations when dealing with repeated fields of a
+  // message that has > INITIAL_STACK_CAPACITY fields.
+  const uint32_t min_capacity = num_fields_ + 32;  // Any number >= +1 will do.
+  const uint32_t new_capacity = std::max(capacity_ * 2, min_capacity);
+  PERFETTO_CHECK(new_capacity > size_ && new_capacity > num_fields_);
   std::unique_ptr<Field[]> new_storage(new Field[new_capacity]);
 
   static_assert(std::is_trivially_copyable<Field>::value,
                 "Field must be trivially copyable");
+
+  // Zero-initialize the slots for known field IDs slots, as they can be
+  // randomly accessed. Instead, there is no need to initialize the repeated
+  // slots, because they are written linearly with no gaps and are always
+  // initialized before incrementing |size_|.
+  const uint32_t new_size = std::max(size_, num_fields_);
+  memset(&new_storage[size_], 0, sizeof(Field) * (new_size - size_));
+
   memcpy(&new_storage[0], fields_, sizeof(Field) * size_);
 
   heap_storage_ = std::move(new_storage);
   fields_ = &heap_storage_[0];
   capacity_ = new_capacity;
+  size_ = new_size;
 }
 
 }  // namespace protozero
@@ -9051,6 +9931,15 @@ uint8_t* ScatteredStreamWriter::ReserveBytes(size_t size) {
   uint8_t* begin = write_ptr_;
   write_ptr_ += size;
 #if PERFETTO_DCHECK_IS_ON()
+  // In the past, the service had a matching DCHECK in
+  // TraceBuffer::TryPatchChunkContents, which was assuming that service and all
+  // producers are built with matching DCHECK levels. This turned out to be a
+  // source of problems and was removed in b/197340286. This memset is useless
+  // these days and is here only to maintain ABI compatibility between producers
+  // that use a v20+ SDK and older versions of the service that were built in
+  // debug mode. At some point around 2023 it should be safe to remove it.
+  // (running a debug version of traced in production seems a bad idea
+  // regardless).
   memset(begin, 0, size);
 #endif
   return begin;
@@ -20831,7 +21720,6 @@ class PERFETTO_EXPORT StressTestConfig_WriterTiming : public ::protozero::CppMes
 #endif
 // gen_amalgamated expanded: #include "protos/perfetto/config/stress_test_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/trace_config.gen.h"
-// gen_amalgamated expanded: #include "protos/perfetto/common/builtin_clock.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/data_source_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/track_event/track_event_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/test_config.gen.h"
@@ -20854,6 +21742,7 @@ class PERFETTO_EXPORT StressTestConfig_WriterTiming : public ::protozero::CppMes
 // gen_amalgamated expanded: #include "protos/perfetto/config/android/android_polled_state_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/android/android_log_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/common/android_log_constants.gen.h"
+// gen_amalgamated expanded: #include "protos/perfetto/common/builtin_clock.gen.h"
 
 namespace perfetto {
 namespace protos {
@@ -21404,7 +22293,6 @@ void TestConfig_DummyFields::Serialize(::protozero::Message* msg) const {
 #pragma GCC diagnostic ignored "-Wfloat-equal"
 #endif
 // gen_amalgamated expanded: #include "protos/perfetto/config/trace_config.gen.h"
-// gen_amalgamated expanded: #include "protos/perfetto/common/builtin_clock.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/data_source_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/track_event/track_event_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/test_config.gen.h"
@@ -21427,6 +22315,7 @@ void TestConfig_DummyFields::Serialize(::protozero::Message* msg) const {
 // gen_amalgamated expanded: #include "protos/perfetto/config/android/android_polled_state_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/android/android_log_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/common/android_log_constants.gen.h"
+// gen_amalgamated expanded: #include "protos/perfetto/common/builtin_clock.gen.h"
 
 namespace perfetto {
 namespace protos {
@@ -21587,7 +22476,7 @@ bool TraceConfig::ParseFromArray(const void* raw, size_t size) {
       case 28 /* trace_uuid_lsb */:
         field.get(&trace_uuid_lsb_);
         break;
-      case 32 /* trace_filter */:
+      case 33 /* trace_filter */:
         (*trace_filter_).ParseFromArray(field.data(), field.size());
         break;
       default:
@@ -21756,9 +22645,9 @@ void TraceConfig::Serialize(::protozero::Message* msg) const {
     msg->AppendVarInt(28, trace_uuid_lsb_);
   }
 
-  // Field 32: trace_filter
-  if (_has_field_[32]) {
-    (*trace_filter_).Serialize(msg->BeginNestedMessage<::protozero::Message>(32));
+  // Field 33: trace_filter
+  if (_has_field_[33]) {
+    (*trace_filter_).Serialize(msg->BeginNestedMessage<::protozero::Message>(33));
   }
 
   msg->AppendRawProtoBytes(unknown_fields_.data(), unknown_fields_.size());
@@ -23488,7 +24377,6 @@ class PERFETTO_EXPORT ChromeCompositorStateMachine_MinorState : public ::protoze
     kScrollHandlerStateFieldNumber = 32,
     kCriticalBeginMainFrameToActivateIsFastFieldNumber = 33,
     kMainThreadMissedLastDeadlineFieldNumber = 34,
-    kSkipNextBeginMainFrameToReduceLatencyFieldNumber = 35,
     kVideoNeedsBeginFramesFieldNumber = 36,
     kDeferBeginMainFrameFieldNumber = 37,
     kLastCommitHadNoUpdatesFieldNumber = 38,
@@ -23652,10 +24540,6 @@ class PERFETTO_EXPORT ChromeCompositorStateMachine_MinorState : public ::protoze
   bool main_thread_missed_last_deadline() const { return main_thread_missed_last_deadline_; }
   void set_main_thread_missed_last_deadline(bool value) { main_thread_missed_last_deadline_ = value; _has_field_.set(34); }
 
-  bool has_skip_next_begin_main_frame_to_reduce_latency() const { return _has_field_[35]; }
-  bool skip_next_begin_main_frame_to_reduce_latency() const { return skip_next_begin_main_frame_to_reduce_latency_; }
-  void set_skip_next_begin_main_frame_to_reduce_latency(bool value) { skip_next_begin_main_frame_to_reduce_latency_ = value; _has_field_.set(35); }
-
   bool has_video_needs_begin_frames() const { return _has_field_[36]; }
   bool video_needs_begin_frames() const { return video_needs_begin_frames_; }
   void set_video_needs_begin_frames(bool value) { video_needs_begin_frames_ = value; _has_field_.set(36); }
@@ -23735,7 +24619,6 @@ class PERFETTO_EXPORT ChromeCompositorStateMachine_MinorState : public ::protoze
   ChromeCompositorStateMachine_MinorState_ScrollHandlerState scroll_handler_state_{};
   bool critical_begin_main_frame_to_activate_is_fast_{};
   bool main_thread_missed_last_deadline_{};
-  bool skip_next_begin_main_frame_to_reduce_latency_{};
   bool video_needs_begin_frames_{};
   bool defer_begin_main_frame_{};
   bool last_commit_had_no_updates_{};
@@ -23863,7 +24746,6 @@ class PERFETTO_EXPORT ChromeCompositorSchedulerState : public ::protozero::CppMe
     kBeginImplFrameDeadlineTaskFieldNumber = 3,
     kPendingBeginFrameTaskFieldNumber = 4,
     kSkippedLastFrameMissedExceededDeadlineFieldNumber = 5,
-    kSkippedLastFrameToReduceLatencyFieldNumber = 6,
     kInsideActionFieldNumber = 7,
     kDeadlineModeFieldNumber = 8,
     kDeadlineUsFieldNumber = 9,
@@ -23910,10 +24792,6 @@ class PERFETTO_EXPORT ChromeCompositorSchedulerState : public ::protozero::CppMe
   bool has_skipped_last_frame_missed_exceeded_deadline() const { return _has_field_[5]; }
   bool skipped_last_frame_missed_exceeded_deadline() const { return skipped_last_frame_missed_exceeded_deadline_; }
   void set_skipped_last_frame_missed_exceeded_deadline(bool value) { skipped_last_frame_missed_exceeded_deadline_ = value; _has_field_.set(5); }
-
-  bool has_skipped_last_frame_to_reduce_latency() const { return _has_field_[6]; }
-  bool skipped_last_frame_to_reduce_latency() const { return skipped_last_frame_to_reduce_latency_; }
-  void set_skipped_last_frame_to_reduce_latency(bool value) { skipped_last_frame_to_reduce_latency_ = value; _has_field_.set(6); }
 
   bool has_inside_action() const { return _has_field_[7]; }
   ChromeCompositorSchedulerAction inside_action() const { return inside_action_; }
@@ -23965,7 +24843,6 @@ class PERFETTO_EXPORT ChromeCompositorSchedulerState : public ::protozero::CppMe
   bool begin_impl_frame_deadline_task_{};
   bool pending_begin_frame_task_{};
   bool skipped_last_frame_missed_exceeded_deadline_{};
-  bool skipped_last_frame_to_reduce_latency_{};
   ChromeCompositorSchedulerAction inside_action_{};
   ChromeCompositorSchedulerState_BeginImplFrameDeadlineMode deadline_mode_{};
   int64_t deadline_us_{};
@@ -24810,7 +25687,6 @@ bool ChromeCompositorStateMachine_MinorState::operator==(const ChromeCompositorS
    && scroll_handler_state_ == other.scroll_handler_state_
    && critical_begin_main_frame_to_activate_is_fast_ == other.critical_begin_main_frame_to_activate_is_fast_
    && main_thread_missed_last_deadline_ == other.main_thread_missed_last_deadline_
-   && skip_next_begin_main_frame_to_reduce_latency_ == other.skip_next_begin_main_frame_to_reduce_latency_
    && video_needs_begin_frames_ == other.video_needs_begin_frames_
    && defer_begin_main_frame_ == other.defer_begin_main_frame_
    && last_commit_had_no_updates_ == other.last_commit_had_no_updates_
@@ -24935,9 +25811,6 @@ bool ChromeCompositorStateMachine_MinorState::ParseFromArray(const void* raw, si
         break;
       case 34 /* main_thread_missed_last_deadline */:
         field.get(&main_thread_missed_last_deadline_);
-        break;
-      case 35 /* skip_next_begin_main_frame_to_reduce_latency */:
-        field.get(&skip_next_begin_main_frame_to_reduce_latency_);
         break;
       case 36 /* video_needs_begin_frames */:
         field.get(&video_needs_begin_frames_);
@@ -25163,11 +26036,6 @@ void ChromeCompositorStateMachine_MinorState::Serialize(::protozero::Message* ms
     msg->AppendTinyVarInt(34, main_thread_missed_last_deadline_);
   }
 
-  // Field 35: skip_next_begin_main_frame_to_reduce_latency
-  if (_has_field_[35]) {
-    msg->AppendTinyVarInt(35, skip_next_begin_main_frame_to_reduce_latency_);
-  }
-
   // Field 36: video_needs_begin_frames
   if (_has_field_[36]) {
     msg->AppendTinyVarInt(36, video_needs_begin_frames_);
@@ -25332,7 +26200,6 @@ bool ChromeCompositorSchedulerState::operator==(const ChromeCompositorSchedulerS
    && begin_impl_frame_deadline_task_ == other.begin_impl_frame_deadline_task_
    && pending_begin_frame_task_ == other.pending_begin_frame_task_
    && skipped_last_frame_missed_exceeded_deadline_ == other.skipped_last_frame_missed_exceeded_deadline_
-   && skipped_last_frame_to_reduce_latency_ == other.skipped_last_frame_to_reduce_latency_
    && inside_action_ == other.inside_action_
    && deadline_mode_ == other.deadline_mode_
    && deadline_us_ == other.deadline_us_
@@ -25370,9 +26237,6 @@ bool ChromeCompositorSchedulerState::ParseFromArray(const void* raw, size_t size
         break;
       case 5 /* skipped_last_frame_missed_exceeded_deadline */:
         field.get(&skipped_last_frame_missed_exceeded_deadline_);
-        break;
-      case 6 /* skipped_last_frame_to_reduce_latency */:
-        field.get(&skipped_last_frame_to_reduce_latency_);
         break;
       case 7 /* inside_action */:
         field.get(&inside_action_);
@@ -25451,11 +26315,6 @@ void ChromeCompositorSchedulerState::Serialize(::protozero::Message* msg) const 
   // Field 5: skipped_last_frame_missed_exceeded_deadline
   if (_has_field_[5]) {
     msg->AppendTinyVarInt(5, skipped_last_frame_missed_exceeded_deadline_);
-  }
-
-  // Field 6: skipped_last_frame_to_reduce_latency
-  if (_has_field_[6]) {
-    msg->AppendTinyVarInt(6, skipped_last_frame_to_reduce_latency_);
   }
 
   // Field 7: inside_action
@@ -26558,6 +27417,7 @@ class PERFETTO_EXPORT ChromeLatencyInfo : public ::protozero::CppMessageObj {
     kComponentInfoFieldNumber = 4,
     kIsCoalescedFieldNumber = 5,
     kGestureScrollIdFieldNumber = 6,
+    kTouchIdFieldNumber = 7,
   };
 
   ChromeLatencyInfo();
@@ -26600,6 +27460,10 @@ class PERFETTO_EXPORT ChromeLatencyInfo : public ::protozero::CppMessageObj {
   int64_t gesture_scroll_id() const { return gesture_scroll_id_; }
   void set_gesture_scroll_id(int64_t value) { gesture_scroll_id_ = value; _has_field_.set(6); }
 
+  bool has_touch_id() const { return _has_field_[7]; }
+  int64_t touch_id() const { return touch_id_; }
+  void set_touch_id(int64_t value) { touch_id_ = value; _has_field_.set(7); }
+
  private:
   int64_t trace_id_{};
   ChromeLatencyInfo_Step step_{};
@@ -26607,12 +27471,13 @@ class PERFETTO_EXPORT ChromeLatencyInfo : public ::protozero::CppMessageObj {
   std::vector<ChromeLatencyInfo_ComponentInfo> component_info_;
   bool is_coalesced_{};
   int64_t gesture_scroll_id_{};
+  int64_t touch_id_{};
 
   // Allows to preserve unknown protobuf fields for compatibility
   // with future versions of .proto files.
   std::string unknown_fields_;
 
-  std::bitset<7> _has_field_{};
+  std::bitset<8> _has_field_{};
 };
 
 
@@ -26690,7 +27555,8 @@ bool ChromeLatencyInfo::operator==(const ChromeLatencyInfo& other) const {
    && frame_tree_node_id_ == other.frame_tree_node_id_
    && component_info_ == other.component_info_
    && is_coalesced_ == other.is_coalesced_
-   && gesture_scroll_id_ == other.gesture_scroll_id_;
+   && gesture_scroll_id_ == other.gesture_scroll_id_
+   && touch_id_ == other.touch_id_;
 }
 
 int ChromeLatencyInfo::component_info_size() const { return static_cast<int>(component_info_.size()); }
@@ -26725,6 +27591,9 @@ bool ChromeLatencyInfo::ParseFromArray(const void* raw, size_t size) {
         break;
       case 6 /* gesture_scroll_id */:
         field.get(&gesture_scroll_id_);
+        break;
+      case 7 /* touch_id */:
+        field.get(&touch_id_);
         break;
       default:
         field.SerializeAndAppendTo(&unknown_fields_);
@@ -26775,6 +27644,11 @@ void ChromeLatencyInfo::Serialize(::protozero::Message* msg) const {
   // Field 6: gesture_scroll_id
   if (_has_field_[6]) {
     msg->AppendVarInt(6, gesture_scroll_id_);
+  }
+
+  // Field 7: touch_id
+  if (_has_field_[7]) {
+    msg->AppendVarInt(7, touch_id_);
   }
 
   msg->AppendRawProtoBytes(unknown_fields_.data(), unknown_fields_.size());
@@ -27503,6 +28377,7 @@ enum ChromeProcessDescriptor_ProcessType : int {
   ChromeProcessDescriptor_ProcessType_PROCESS_SERVICE_IME = 37,
   ChromeProcessDescriptor_ProcessType_PROCESS_SERVICE_RECORDING = 38,
   ChromeProcessDescriptor_ProcessType_PROCESS_SERVICE_SHAPEDETECTION = 39,
+  ChromeProcessDescriptor_ProcessType_PROCESS_RENDERER_EXTENSION = 40,
 };
 
 class PERFETTO_EXPORT ChromeProcessDescriptor : public ::protozero::CppMessageObj {
@@ -27548,8 +28423,9 @@ class PERFETTO_EXPORT ChromeProcessDescriptor : public ::protozero::CppMessageOb
   static constexpr auto PROCESS_SERVICE_IME = ChromeProcessDescriptor_ProcessType_PROCESS_SERVICE_IME;
   static constexpr auto PROCESS_SERVICE_RECORDING = ChromeProcessDescriptor_ProcessType_PROCESS_SERVICE_RECORDING;
   static constexpr auto PROCESS_SERVICE_SHAPEDETECTION = ChromeProcessDescriptor_ProcessType_PROCESS_SERVICE_SHAPEDETECTION;
+  static constexpr auto PROCESS_RENDERER_EXTENSION = ChromeProcessDescriptor_ProcessType_PROCESS_RENDERER_EXTENSION;
   static constexpr auto ProcessType_MIN = ChromeProcessDescriptor_ProcessType_PROCESS_UNSPECIFIED;
-  static constexpr auto ProcessType_MAX = ChromeProcessDescriptor_ProcessType_PROCESS_SERVICE_SHAPEDETECTION;
+  static constexpr auto ProcessType_MAX = ChromeProcessDescriptor_ProcessType_PROCESS_RENDERER_EXTENSION;
   enum FieldNumbers {
     kProcessTypeFieldNumber = 1,
     kProcessPriorityFieldNumber = 2,
@@ -37552,10 +38428,17 @@ class ThreadDescriptor : public ::protozero::Message {
 
 // gen_amalgamated expanded: #include "perfetto/tracing/console_interceptor.h"
 
+#include <stdarg.h>
+
+#include <algorithm>
+#include <cmath>
+#include <tuple>
+
 // gen_amalgamated expanded: #include "perfetto/ext/base/file_utils.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/hash.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/optional.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/scoped_file.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/string_utils.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/utils.h"
 // gen_amalgamated expanded: #include "perfetto/tracing/internal/track_event_internal.h"
 
@@ -37570,10 +38453,6 @@ class ThreadDescriptor : public ::protozero::Message {
 // gen_amalgamated expanded: #include "protos/perfetto/trace/track_event/thread_descriptor.pbzero.h"
 // gen_amalgamated expanded: #include "protos/perfetto/trace/track_event/track_descriptor.pbzero.h"
 // gen_amalgamated expanded: #include "protos/perfetto/trace/track_event/track_event.pbzero.h"
-
-#include <algorithm>
-#include <cmath>
-#include <tuple>
 
 namespace perfetto {
 
@@ -37713,18 +38592,17 @@ void ConsoleInterceptor::Delegate::OnTrackUpdated(
 
   auto& tls = context_.GetThreadLocalState();
   std::array<char, 128> message_prefix{};
-  ssize_t written = 0;
+  size_t written = 0;
   if (tls.use_colors) {
-    written = snprintf(message_prefix.data(), message_prefix.size(),
-                       FMT_RGB_SET_BG " %s%s %-*.*s", track_color.r,
-                       track_color.g, track_color.b, kReset, kDim, title_width,
-                       title_width, title.data());
+    written = base::SprintfTrunc(message_prefix.data(), message_prefix.size(),
+                                 FMT_RGB_SET_BG " %s%s %-*.*s", track_color.r,
+                                 track_color.g, track_color.b, kReset, kDim,
+                                 title_width, title_width, title.data());
   } else {
-    written = snprintf(message_prefix.data(), message_prefix.size(), "%-*.*s",
-                       title_width + 2, title_width, title.data());
+    written = base::SprintfTrunc(message_prefix.data(), message_prefix.size(),
+                                 "%-*.*s", title_width + 2, title_width,
+                                 title.data());
   }
-  if (written < 0)
-    written = message_prefix.size();
   track.user_data.assign(message_prefix.begin(),
                          message_prefix.begin() + written);
 }
@@ -38060,6 +38938,81 @@ void DebugAnnotation::WriteIntoTracedValue(TracedValue context) const {
 
 }  // namespace perfetto
 // gen_amalgamated begin source: src/tracing/event_context.cc
+// gen_amalgamated begin header: include/perfetto/tracing/internal/track_event_interned_fields.h
+/*
+ * Copyright (C) 2021 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// gen_amalgamated expanded: #include "perfetto/base/export.h"
+// gen_amalgamated expanded: #include "perfetto/tracing/track_event_interned_data_index.h"
+
+#ifndef INCLUDE_PERFETTO_TRACING_INTERNAL_TRACK_EVENT_INTERNED_FIELDS_H_
+#define INCLUDE_PERFETTO_TRACING_INTERNAL_TRACK_EVENT_INTERNED_FIELDS_H_
+
+namespace perfetto {
+namespace internal {
+
+// These helpers are exposed here to allow Chromium-without-client library
+// to share the interning buffers with Perfetto internals (e.g.
+// perfetto::TracedValue implementation).
+
+struct PERFETTO_EXPORT InternedEventCategory
+    : public TrackEventInternedDataIndex<
+          InternedEventCategory,
+          perfetto::protos::pbzero::InternedData::kEventCategoriesFieldNumber,
+          const char*,
+          SmallInternedDataTraits> {
+  ~InternedEventCategory() override;
+
+  static void Add(protos::pbzero::InternedData* interned_data,
+                  size_t iid,
+                  const char* value,
+                  size_t length);
+};
+
+struct PERFETTO_EXPORT InternedEventName
+    : public TrackEventInternedDataIndex<
+          InternedEventName,
+          perfetto::protos::pbzero::InternedData::kEventNamesFieldNumber,
+          const char*,
+          SmallInternedDataTraits> {
+  ~InternedEventName() override;
+
+  static void Add(protos::pbzero::InternedData* interned_data,
+                  size_t iid,
+                  const char* value);
+};
+
+struct PERFETTO_EXPORT InternedDebugAnnotationName
+    : public TrackEventInternedDataIndex<
+          InternedDebugAnnotationName,
+          perfetto::protos::pbzero::InternedData::
+              kDebugAnnotationNamesFieldNumber,
+          const char*,
+          SmallInternedDataTraits> {
+  ~InternedDebugAnnotationName() override;
+
+  static void Add(protos::pbzero::InternedData* interned_data,
+                  size_t iid,
+                  const char* value);
+};
+
+}  // namespace internal
+}  // namespace perfetto
+
+#endif  // INCLUDE_PERFETTO_TRACING_INTERNAL_TRACK_EVENT_INTERNED_FIELDS_H_
 /*
  * Copyright (C) 2019 The Android Open Source Project
  *
@@ -38078,6 +39031,7 @@ void DebugAnnotation::WriteIntoTracedValue(TracedValue context) const {
 
 // gen_amalgamated expanded: #include "perfetto/tracing/event_context.h"
 
+// gen_amalgamated expanded: #include "perfetto/tracing/internal/track_event_interned_fields.h"
 // gen_amalgamated expanded: #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 // gen_amalgamated expanded: #include "protos/perfetto/trace/track_event/track_event.pbzero.h"
 
@@ -38110,6 +39064,14 @@ EventContext::~EventContext() {
 
   // Reset the message but keep one buffer allocated for future use.
   serialized_interned_data.Reset();
+}
+
+protos::pbzero::DebugAnnotation* EventContext::AddDebugAnnotation(
+    const char* name) {
+  auto annotation = event()->add_debug_annotations();
+  annotation->set_name_iid(
+      internal::InternedDebugAnnotationName::Get(this, name));
+  return annotation;
 }
 
 }  // namespace perfetto
@@ -38833,6 +39795,7 @@ class TracingMuxerImpl : public TracingMuxer {
   using TracingSessionGlobalID = uint64_t;
 
   static void InitializeInstance(const TracingInitArgs&);
+  static void ResetForTesting();
 
   // TracingMuxer implementation.
   bool RegisterDataSource(const DataSourceDescriptor&,
@@ -38914,6 +39877,7 @@ class TracingMuxerImpl : public TracingMuxer {
     void RegisterDataSource(const DataSourceDescriptor&,
                             DataSourceFactory,
                             DataSourceStaticState*);
+    void DisposeConnection();
 
     // perfetto::Producer implementation.
     void OnConnect() override;
@@ -38927,12 +39891,13 @@ class TracingMuxerImpl : public TracingMuxer {
     void Flush(FlushRequestID, const DataSourceInstanceID*, size_t) override;
     void ClearIncrementalState(const DataSourceInstanceID*, size_t) override;
 
-    void SweepDeadServices();
+    bool SweepDeadServices();
 
     PERFETTO_THREAD_CHECKER(thread_checker_)
-    TracingMuxerImpl* const muxer_;
+    TracingMuxerImpl* muxer_;
     TracingBackendId const backend_id_;
     bool connected_ = false;
+    bool did_setup_tracing_ = false;
     uint32_t connection_id_ = 0;
 
     const uint32_t shmem_batch_commits_duration_ms_ = 0;
@@ -38994,7 +39959,7 @@ class TracingMuxerImpl : public TracingMuxer {
     // Will eventually inform the |muxer_| when it is safe to remove |this|.
     void Disconnect();
 
-    TracingMuxerImpl* const muxer_;
+    TracingMuxerImpl* muxer_;
     BackendType const backend_type_;
     TracingBackendId const backend_id_;
     TracingSessionGlobalID const session_id_;
@@ -39119,6 +40084,7 @@ class TracingMuxerImpl : public TracingMuxer {
   void InitializeConsumer(TracingSessionGlobalID session_id);
   void OnConsumerDisconnected(ConsumerImpl* consumer);
   void OnProducerDisconnected(ProducerImpl* producer);
+  void SweepDeadBackends();
 
   struct FindDataSourceRes {
     FindDataSourceRes() = default;
@@ -39132,6 +40098,7 @@ class TracingMuxerImpl : public TracingMuxer {
   };
   FindDataSourceRes FindDataSource(TracingBackendId, DataSourceInstanceID);
 
+  // WARNING: If you add new state here, be sure to update ResetForTesting.
   std::unique_ptr<base::TaskRunner> task_runner_;
   std::vector<RegisteredDataSource> data_sources_;
   std::vector<RegisteredBackend> backends_;
@@ -39139,10 +40106,17 @@ class TracingMuxerImpl : public TracingMuxer {
   TracingPolicy* policy_ = nullptr;
 
   std::atomic<TracingSessionGlobalID> next_tracing_session_id_{};
+  std::atomic<uint32_t> next_data_source_index_{};
+  uint32_t muxer_id_for_testing_{};
 
   // Maximum number of times we will try to reconnect producer backend.
   // Should only be modified for testing purposes.
   std::atomic<uint32_t> max_producer_reconnections_{100u};
+
+  // After ResetForTesting() is called, holds tracing backends which needs to be
+  // kept alive until all inbound references have gone away. See
+  // SweepDeadBackends().
+  std::list<RegisteredBackend> dead_backends_;
 
   PERFETTO_THREAD_CHECKER(thread_checker_)
 };
@@ -39340,6 +40314,9 @@ uint64_t ComputeConfigHash(const DataSourceConfig& config) {
   return hasher.digest();
 }
 
+// Holds an earlier TracingMuxerImpl instance after ResetForTesting() is called.
+static TracingMuxerImpl* g_prev_instance{};
+
 }  // namespace
 
 // ----- Begin of TracingMuxerImpl::ProducerImpl
@@ -39351,7 +40328,9 @@ TracingMuxerImpl::ProducerImpl::ProducerImpl(
       backend_id_(backend_id),
       shmem_batch_commits_duration_ms_(shmem_batch_commits_duration_ms) {}
 
-TracingMuxerImpl::ProducerImpl::~ProducerImpl() = default;
+TracingMuxerImpl::ProducerImpl::~ProducerImpl() {
+  muxer_ = nullptr;
+}
 
 void TracingMuxerImpl::ProducerImpl::Initialize(
     std::unique_ptr<ProducerEndpoint> endpoint) {
@@ -39365,6 +40344,10 @@ void TracingMuxerImpl::ProducerImpl::Initialize(
   // that |task_runner| is assumed to outlive tracing sessions on all threads.)
   auto* task_runner = muxer_->task_runner_.get();
   auto deleter = [task_runner](ProducerEndpoint* e) {
+    if (task_runner->RunsTasksOnCurrentThread()) {
+      delete e;
+      return;
+    }
     task_runner->PostTask([e] { delete e; });
   };
   std::shared_ptr<ProducerEndpoint> service(endpoint.release(), deleter);
@@ -39386,23 +40369,37 @@ void TracingMuxerImpl::ProducerImpl::OnConnect() {
 
 void TracingMuxerImpl::ProducerImpl::OnDisconnect() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  // If we're being destroyed, bail out.
+  if (!muxer_)
+    return;
   connected_ = false;
   // Active data sources for this producer will be stopped by
   // DestroyStoppedTraceWritersForCurrentThread() since the reconnected producer
   // will have a different connection id (even before it has finished
   // connecting).
   registered_data_sources_.reset();
-  // Keep the old service around as a dead connection in case it has active
-  // trace writers. We can't clear |service_| here because other threads may be
-  // concurrently creating new trace writers. The reconnection below will
-  // atomically swap the new service in place of the old one.
-  dead_services_.push_back(service_);
+  DisposeConnection();
+
   // Try reconnecting the producer.
   muxer_->OnProducerDisconnected(this);
 }
 
+void TracingMuxerImpl::ProducerImpl::DisposeConnection() {
+  // Keep the old service around as a dead connection in case it has active
+  // trace writers. If any tracing sessions were created, we can't clear
+  // |service_| here because other threads may be concurrently creating new
+  // trace writers. Any reconnection attempt will atomically swap the new
+  // service in place of the old one.
+  if (did_setup_tracing_) {
+    dead_services_.push_back(service_);
+  } else {
+    service_.reset();
+  }
+}
+
 void TracingMuxerImpl::ProducerImpl::OnTracingSetup() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  did_setup_tracing_ = true;
   service_->MaybeSharedMemoryArbiter()->SetBatchCommitsDuration(
       shmem_batch_commits_duration_ms_);
 }
@@ -39411,18 +40408,24 @@ void TracingMuxerImpl::ProducerImpl::SetupDataSource(
     DataSourceInstanceID id,
     const DataSourceConfig& cfg) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!muxer_)
+    return;
   muxer_->SetupDataSource(backend_id_, connection_id_, id, cfg);
 }
 
 void TracingMuxerImpl::ProducerImpl::StartDataSource(DataSourceInstanceID id,
                                                      const DataSourceConfig&) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!muxer_)
+    return;
   muxer_->StartDataSource(backend_id_, id);
   service_->NotifyDataSourceStarted(id);
 }
 
 void TracingMuxerImpl::ProducerImpl::StopDataSource(DataSourceInstanceID id) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!muxer_)
+    return;
   muxer_->StopDataSource_AsyncBegin(backend_id_, id);
 }
 
@@ -39438,12 +40441,14 @@ void TracingMuxerImpl::ProducerImpl::ClearIncrementalState(
     const DataSourceInstanceID* instances,
     size_t instance_count) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!muxer_)
+    return;
   for (size_t inst_idx = 0; inst_idx < instance_count; inst_idx++) {
     muxer_->ClearDataSourceIncrementalState(backend_id_, instances[inst_idx]);
   }
 }
 
-void TracingMuxerImpl::ProducerImpl::SweepDeadServices() {
+bool TracingMuxerImpl::ProducerImpl::SweepDeadServices() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   auto is_unused = [](const std::shared_ptr<ProducerEndpoint>& endpoint) {
     auto* arbiter = endpoint->MaybeSharedMemoryArbiter();
@@ -39457,6 +40462,7 @@ void TracingMuxerImpl::ProducerImpl::SweepDeadServices() {
     }
     it = next_it;
   }
+  return dead_services_.empty();
 }
 
 // ----- End of TracingMuxerImpl::ProducerImpl methods.
@@ -39471,7 +40477,9 @@ TracingMuxerImpl::ConsumerImpl::ConsumerImpl(TracingMuxerImpl* muxer,
       backend_id_(backend_id),
       session_id_(session_id) {}
 
-TracingMuxerImpl::ConsumerImpl::~ConsumerImpl() = default;
+TracingMuxerImpl::ConsumerImpl::~ConsumerImpl() {
+  muxer_ = nullptr;
+}
 
 void TracingMuxerImpl::ConsumerImpl::Initialize(
     std::unique_ptr<ConsumerEndpoint> endpoint) {
@@ -39512,6 +40520,9 @@ void TracingMuxerImpl::ConsumerImpl::OnConnect() {
 
 void TracingMuxerImpl::ConsumerImpl::OnDisconnect() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  // If we're being destroyed, bail out.
+  if (!muxer_)
+    return;
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   if (!connected_ && backend_type_ == kSystemBackend) {
     PERFETTO_ELOG(
@@ -39982,8 +40993,7 @@ bool TracingMuxerImpl::RegisterDataSource(
   if (static_state->index != kMaxDataSources)
     return true;
 
-  static std::atomic<uint32_t> last_id{};
-  uint32_t new_index = last_id++;
+  uint32_t new_index = next_data_source_index_++;
   if (new_index >= kMaxDataSources) {
     PERFETTO_DLOG(
         "RegisterDataSource failed: too many data sources already registered");
@@ -40097,6 +41107,7 @@ void TracingMuxerImpl::SetupDataSource(TracingBackendId backend_id,
           std::is_same<decltype(internal_state->data_source_instance_id),
                        DataSourceInstanceID>::value,
           "data_source_instance_id type mismatch");
+      internal_state->muxer_id_for_testing = muxer_id_for_testing_;
       internal_state->backend_id = backend_id;
       internal_state->backend_connection_id = backend_connection_id;
       internal_state->data_source_instance_id = instance_id;
@@ -40233,6 +41244,7 @@ void TracingMuxerImpl::StopDataSource_AsyncEnd(
     std::lock_guard<std::recursive_mutex> guard(ds.internal_state->lock);
     ds.internal_state->trace_lambda_enabled = false;
     ds.internal_state->data_source.reset();
+    ds.internal_state->interceptor.reset();
   }
 
   // The other fields of internal_state are deliberately *not* cleared.
@@ -40343,7 +41355,9 @@ void TracingMuxerImpl::DestroyStoppedTraceWritersForCurrentThread() {
         continue;
 
       DataSourceState* ds_state = static_state->TryGet(inst);
-      if (ds_state && ds_state->backend_id == ds_tls.backend_id &&
+      if (ds_state &&
+          ds_state->muxer_id_for_testing == ds_tls.muxer_id_for_testing &&
+          ds_state->backend_id == ds_tls.backend_id &&
           ds_state->backend_connection_id == ds_tls.backend_connection_id &&
           ds_state->buffer_id == ds_tls.buffer_id &&
           ds_state->data_source_instance_id == ds_tls.data_source_instance_id) {
@@ -40697,6 +41711,17 @@ void TracingMuxerImpl::OnProducerDisconnected(ProducerImpl* producer) {
   TracingMuxer::generation_++;
 }
 
+void TracingMuxerImpl::SweepDeadBackends() {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  for (auto it = dead_backends_.begin(); it != dead_backends_.end();) {
+    auto next_it = it;
+    next_it++;
+    if (it->producer->SweepDeadServices())
+      dead_backends_.erase(it);
+    it = next_it;
+  }
+}
+
 TracingMuxerImpl::FindDataSourceRes TracingMuxerImpl::FindDataSource(
     TracingBackendId backend_id,
     DataSourceInstanceID instance_id) {
@@ -40825,10 +41850,94 @@ std::unique_ptr<TracingSession> TracingMuxerImpl::CreateTracingSession(
       new TracingSessionImpl(this, session_id, requested_backend_type));
 }
 
+// static
 void TracingMuxerImpl::InitializeInstance(const TracingInitArgs& args) {
   if (instance_ != TracingMuxerFake::Get())
     PERFETTO_FATAL("Tracing already initialized");
-  new TracingMuxerImpl(args);
+  // If we previously had a TracingMuxerImpl instance which was reset,
+  // reinitialize and reuse it instead of trying to create a new one. See
+  // ResetForTesting().
+  if (g_prev_instance) {
+    auto* muxer = g_prev_instance;
+    g_prev_instance = nullptr;
+    instance_ = muxer;
+    muxer->task_runner_->PostTask([muxer, args] { muxer->Initialize(args); });
+  } else {
+    new TracingMuxerImpl(args);
+  }
+}
+
+// static
+void TracingMuxerImpl::ResetForTesting() {
+  // Ideally we'd tear down the entire TracingMuxerImpl, but the lifetimes of
+  // various objects make that a non-starter. In particular:
+  //
+  // 1) Any thread that has entered a trace event has a TraceWriter, which holds
+  //    a reference back to ProducerImpl::service_.
+  //
+  // 2) ProducerImpl::service_ has a reference back to the ProducerImpl.
+  //
+  // 3) ProducerImpl holds reference to TracingMuxerImpl::task_runner_, which in
+  //    turn depends on TracingMuxerImpl itself.
+  //
+  // Because of this, it's not safe to deallocate TracingMuxerImpl until all
+  // threads have dropped their TraceWriters. Since we can't really ask the
+  // caller to guarantee this, we'll instead reset enough of the muxer's state
+  // so that it can be reinitialized later and ensure all necessary objects from
+  // the old state remain alive until all references have gone away.
+  auto* muxer = reinterpret_cast<TracingMuxerImpl*>(instance_);
+
+  base::WaitableEvent reset_done;
+  auto do_reset = [muxer, &reset_done] {
+    // Unregister all data sources so they don't interfere with any future
+    // tracing sessions.
+    for (RegisteredDataSource& rds : muxer->data_sources_) {
+      for (RegisteredBackend& backend : muxer->backends_) {
+        if (!backend.producer->service_)
+          continue;
+        backend.producer->service_->UnregisterDataSource(rds.descriptor.name());
+      }
+    }
+    for (auto& backend : muxer->backends_) {
+      // Check that no consumer session is currently active on any backend.
+      for (auto& consumer : backend.consumers)
+        PERFETTO_CHECK(!consumer->service_);
+      backend.producer->muxer_ = nullptr;
+      backend.producer->DisposeConnection();
+      muxer->dead_backends_.push_back(std::move(backend));
+    }
+    muxer->backends_.clear();
+    muxer->interceptors_.clear();
+
+    for (auto& ds : muxer->data_sources_) {
+      ds.static_state->~DataSourceStaticState();
+      new (ds.static_state) DataSourceStaticState{};
+    }
+    muxer->data_sources_.clear();
+    muxer->next_data_source_index_ = 0;
+
+    // Free all backends without active trace writers or other inbound
+    // references. Note that even if all the backends get swept, the muxer still
+    // needs to stay around since |task_runner_| is assumed to be long-lived.
+    muxer->SweepDeadBackends();
+
+    // Make sure we eventually discard any per-thread trace writers from the
+    // previous instance.
+    muxer->muxer_id_for_testing_++;
+
+    g_prev_instance = muxer;
+    instance_ = TracingMuxerFake::Get();
+    reset_done.Notify();
+  };
+
+  // Some tests run the muxer and the test on the same thread. In these cases,
+  // we can reset synchronously.
+  if (muxer->task_runner_->RunsTasksOnCurrentThread()) {
+    do_reset();
+  } else {
+    muxer->task_runner_->PostTask(std::move(do_reset));
+    reset_done.Wait();
+  }
 }
 
 TracingMuxer::~TracingMuxer() = default;
@@ -40839,81 +41948,6 @@ static_assert(std::is_same<internal::BufferId, BufferID>::value,
 }  // namespace internal
 }  // namespace perfetto
 // gen_amalgamated begin source: src/tracing/internal/track_event_internal.cc
-// gen_amalgamated begin header: include/perfetto/tracing/internal/track_event_interned_fields.h
-/*
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-// gen_amalgamated expanded: #include "perfetto/base/export.h"
-// gen_amalgamated expanded: #include "perfetto/tracing/track_event_interned_data_index.h"
-
-#ifndef INCLUDE_PERFETTO_TRACING_INTERNAL_TRACK_EVENT_INTERNED_FIELDS_H_
-#define INCLUDE_PERFETTO_TRACING_INTERNAL_TRACK_EVENT_INTERNED_FIELDS_H_
-
-namespace perfetto {
-namespace internal {
-
-// These helpers are exposed here to allow Chromium-without-client library
-// to share the interning buffers with Perfetto internals (e.g.
-// perfetto::TracedValue implementation).
-
-struct PERFETTO_EXPORT InternedEventCategory
-    : public TrackEventInternedDataIndex<
-          InternedEventCategory,
-          perfetto::protos::pbzero::InternedData::kEventCategoriesFieldNumber,
-          const char*,
-          SmallInternedDataTraits> {
-  ~InternedEventCategory() override;
-
-  static void Add(protos::pbzero::InternedData* interned_data,
-                  size_t iid,
-                  const char* value,
-                  size_t length);
-};
-
-struct PERFETTO_EXPORT InternedEventName
-    : public TrackEventInternedDataIndex<
-          InternedEventName,
-          perfetto::protos::pbzero::InternedData::kEventNamesFieldNumber,
-          const char*,
-          SmallInternedDataTraits> {
-  ~InternedEventName() override;
-
-  static void Add(protos::pbzero::InternedData* interned_data,
-                  size_t iid,
-                  const char* value);
-};
-
-struct PERFETTO_EXPORT InternedDebugAnnotationName
-    : public TrackEventInternedDataIndex<
-          InternedDebugAnnotationName,
-          perfetto::protos::pbzero::InternedData::
-              kDebugAnnotationNamesFieldNumber,
-          const char*,
-          SmallInternedDataTraits> {
-  ~InternedDebugAnnotationName() override;
-
-  static void Add(protos::pbzero::InternedData* interned_data,
-                  size_t iid,
-                  const char* value);
-};
-
-}  // namespace internal
-}  // namespace perfetto
-
-#endif  // INCLUDE_PERFETTO_TRACING_INTERNAL_TRACK_EVENT_INTERNED_FIELDS_H_
 // gen_amalgamated begin header: gen/protos/perfetto/common/track_event_descriptor.pbzero.h
 // Autogenerated by the ProtoZero compiler plugin. DO NOT EDIT.
 
@@ -41782,7 +42816,7 @@ void Tracing::InitializeInternal(const TracingInitArgs& args) {
   // Make sure the headers and implementation files agree on the build config.
   PERFETTO_CHECK(args.dcheck_is_on_ == PERFETTO_DCHECK_IS_ON());
   if (args.log_message_callback) {
-    SetLogMessageCallback(args.log_message_callback);
+    base::SetLogMessageCallback(args.log_message_callback);
   }
   internal::TracingMuxerImpl::InitializeInstance(args);
   internal::TrackRegistry::InitializeInstance();
@@ -41793,6 +42827,16 @@ void Tracing::InitializeInternal(const TracingInitArgs& args) {
 // static
 bool Tracing::IsInitialized() {
   return g_was_initialized;
+}
+
+// static
+void Tracing::ResetForTesting() {
+  if (!g_was_initialized)
+    return;
+  base::SetLogMessageCallback(nullptr);
+  internal::TracingMuxerImpl::ResetForTesting();
+  internal::TrackRegistry::ResetForTesting();
+  g_was_initialized = false;
 }
 
 //  static
@@ -42085,6 +43129,11 @@ void TrackRegistry::InitializeInstance() {
     // Fall back to a randomly generated identifier.
     Track::process_uuid = static_cast<uint64_t>(base::Uuidv4().lsb());
   }
+}
+
+void TrackRegistry::ResetForTesting() {
+  delete instance_;
+  instance_ = nullptr;
 }
 
 void TrackRegistry::UpdateTrack(Track track,
@@ -45855,12 +46904,6 @@ bool TraceBuffer::TryPatchChunkContents(ProducerID producer_id,
       return false;
     }
 
-    // DCHECK that we are writing into a zero-filled size field and not into
-    // valid data. It relies on ScatteredStreamWriter::ReserveBytes() to
-    // zero-fill reservations in debug builds.
-    char zero[Patch::kSize]{};
-    PERFETTO_DCHECK(memcmp(ptr, &zero, Patch::kSize) == 0);
-
     memcpy(ptr, &patches[i].data[0], Patch::kSize);
   }
   TRACE_BUFFER_DLOG(
@@ -46697,6 +47740,9 @@ class TracingServiceImpl : public TracingService {
   static constexpr uint8_t kSyncMarker[] = {0x82, 0x47, 0x7a, 0x76, 0xb2, 0x8d,
                                             0x42, 0xba, 0x81, 0xdc, 0x33, 0x32,
                                             0x6d, 0x57, 0xa0, 0x79};
+  static constexpr size_t kMaxTracePacketSliceSize =
+      128 * 1024 - 512;  // This is ipc::kIPCBufferSize - 512, see assertion in
+                         // tracing_integration_test.cc and b/195065199
 
   // The implementation behind the service endpoint exposed to each producer.
   class ProducerEndpointImpl : public TracingService::ProducerEndpoint {
@@ -48453,7 +49499,7 @@ enum TraceConfig_BufferConfig_FillPolicy : int32_t {
 const TraceConfig_BufferConfig_FillPolicy TraceConfig_BufferConfig_FillPolicy_MIN = TraceConfig_BufferConfig_FillPolicy_UNSPECIFIED;
 const TraceConfig_BufferConfig_FillPolicy TraceConfig_BufferConfig_FillPolicy_MAX = TraceConfig_BufferConfig_FillPolicy_DISCARD;
 
-class TraceConfig_Decoder : public ::protozero::TypedProtoDecoder</*MAX_FIELD_ID=*/32, /*HAS_NONPACKED_REPEATED_FIELDS=*/true> {
+class TraceConfig_Decoder : public ::protozero::TypedProtoDecoder</*MAX_FIELD_ID=*/33, /*HAS_NONPACKED_REPEATED_FIELDS=*/true> {
  public:
   TraceConfig_Decoder(const uint8_t* data, size_t len) : TypedProtoDecoder(data, len) {}
   explicit TraceConfig_Decoder(const std::string& raw) : TypedProtoDecoder(reinterpret_cast<const uint8_t*>(raw.data()), raw.size()) {}
@@ -48516,8 +49562,8 @@ class TraceConfig_Decoder : public ::protozero::TypedProtoDecoder</*MAX_FIELD_ID
   int64_t trace_uuid_msb() const { return at<27>().as_int64(); }
   bool has_trace_uuid_lsb() const { return at<28>().valid(); }
   int64_t trace_uuid_lsb() const { return at<28>().as_int64(); }
-  bool has_trace_filter() const { return at<32>().valid(); }
-  ::protozero::ConstBytes trace_filter() const { return at<32>().as_bytes(); }
+  bool has_trace_filter() const { return at<33>().valid(); }
+  ::protozero::ConstBytes trace_filter() const { return at<33>().as_bytes(); }
 };
 
 class TraceConfig : public ::protozero::Message {
@@ -48553,7 +49599,7 @@ class TraceConfig : public ::protozero::Message {
     kStatsdLoggingFieldNumber = 31,
     kTraceUuidMsbFieldNumber = 27,
     kTraceUuidLsbFieldNumber = 28,
-    kTraceFilterFieldNumber = 32,
+    kTraceFilterFieldNumber = 33,
   };
   using BufferConfig = ::perfetto::protos::pbzero::TraceConfig_BufferConfig;
   using DataSource = ::perfetto::protos::pbzero::TraceConfig_DataSource;
@@ -49277,7 +50323,7 @@ class TraceConfig : public ::protozero::Message {
 
   using FieldMetadata_TraceFilter =
     ::protozero::proto_utils::FieldMetadata<
-      32,
+      33,
       ::protozero::proto_utils::RepetitionType::kNotRepeated,
       ::protozero::proto_utils::ProtoSchemaType::kMessage,
       TraceConfig_TraceFilter,
@@ -49292,7 +50338,7 @@ class TraceConfig : public ::protozero::Message {
   // TODO(altimin): Use inline variable instead after adopting C++17.  
   static constexpr FieldMetadata_TraceFilter kTraceFilter() { return {}; }
   template <typename T = TraceConfig_TraceFilter> T* set_trace_filter() {
-    return BeginNestedMessage<T>(32);
+    return BeginNestedMessage<T>(33);
   }
 
 };
@@ -51616,6 +52662,29 @@ bool ShouldLogEvent(const TraceConfig& cfg) {
   PERFETTO_FATAL("For GCC");
 }
 
+// Appends `data` (which has `size` bytes), to `*packet`. Splits the data in
+// slices no larger than `max_slice_size`.
+void AppendOwnedSlicesToPacket(std::unique_ptr<uint8_t[]> data,
+                               size_t size,
+                               size_t max_slice_size,
+                               perfetto::TracePacket* packet) {
+  if (size <= max_slice_size) {
+    packet->AddSlice(Slice::TakeOwnership(std::move(data), size));
+    return;
+  }
+  uint8_t* src_ptr = data.get();
+  for (size_t size_left = size; size_left > 0;) {
+    const size_t slice_size = std::min(size_left, max_slice_size);
+
+    Slice slice = Slice::Allocate(slice_size);
+    memcpy(slice.own_data(), src_ptr, slice_size);
+    packet->AddSlice(std::move(slice));
+
+    src_ptr += slice_size;
+    size_left -= slice_size;
+  }
+}
+
 }  // namespace
 
 // These constants instead are defined in the header because are used by tests.
@@ -51684,8 +52753,8 @@ TracingServiceImpl::ConnectProducer(Producer* producer,
     return nullptr;
   }
   const ProducerID id = GetNextProducerID();
-  PERFETTO_DLOG("Producer %" PRIu16 " connected", id);
-
+  PERFETTO_DLOG("Producer %" PRIu16 " connected, uid=%d", id,
+                static_cast<int>(uid));
   bool smb_scraping_enabled = smb_scraping_enabled_;
   switch (smb_scraping_mode) {
     case ProducerSMBScrapingMode::kDefault:
@@ -53497,8 +54566,9 @@ bool TracingServiceImpl::ReadBuffers(TracingSessionID tsid,
         continue;
       }
       tracing_session->filter_output_bytes += filtered_packet.size;
-      it->AddSlice(Slice::TakeOwnership(std::move(filtered_packet.data),
-                                        filtered_packet.size));
+      AppendOwnedSlicesToPacket(std::move(filtered_packet.data),
+                                filtered_packet.size, kMaxTracePacketSliceSize,
+                                &*it);
 
     }  // for (packet)
   }    // if (trace_filter)
@@ -54853,7 +55923,7 @@ void TracingServiceImpl::ConsumerEndpointImpl::QueryServiceState(
     producer->set_id(static_cast<int>(kv.first));
     producer->set_name(kv.second->name_);
     producer->set_sdk_version(kv.second->sdk_version_);
-    producer->set_uid(static_cast<int32_t>(producer->uid()));
+    producer->set_uid(static_cast<int32_t>(kv.second->uid()));
   }
 
   for (const auto& kv : service_->data_sources_) {
@@ -55303,11 +56373,6 @@ InProcessTracingBackend::InProcessTracingBackend() {}
 std::unique_ptr<ProducerEndpoint> InProcessTracingBackend::ConnectProducer(
     const ConnectProducerArgs& args) {
   PERFETTO_DCHECK(args.task_runner->RunsTasksOnCurrentThread());
-
-  // This should never happen as we can have at most one in-process backend.
-  if (service_)
-    PERFETTO_FATAL("InProcessTracingBackend initialized twice");
-
   return GetOrCreateService(args.task_runner)
       ->ConnectProducer(args.producer, /*uid=*/0, args.producer_name,
                         args.shmem_size_hint_bytes,
@@ -56417,7 +57482,6 @@ class PERFETTO_EXPORT EnableTracingRequest : public ::protozero::CppMessageObj {
 #endif
 // gen_amalgamated expanded: #include "protos/perfetto/ipc/consumer_port.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/trace_config.gen.h"
-// gen_amalgamated expanded: #include "protos/perfetto/common/builtin_clock.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/data_source_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/track_event/track_event_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/test_config.gen.h"
@@ -56440,6 +57504,7 @@ class PERFETTO_EXPORT EnableTracingRequest : public ::protozero::CppMessageObj {
 // gen_amalgamated expanded: #include "protos/perfetto/config/android/android_polled_state_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/config/android/android_log_config.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/common/android_log_constants.gen.h"
+// gen_amalgamated expanded: #include "protos/perfetto/common/builtin_clock.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/common/trace_stats.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/common/tracing_service_capabilities.gen.h"
 // gen_amalgamated expanded: #include "protos/perfetto/common/observable_events.gen.h"
@@ -58036,7 +59101,6 @@ class InitializeConnectionRequest;
 enum DataSourceConfig_SessionInitiator : int;
 enum ChromeConfig_ClientPriority : int;
 enum InitializeConnectionRequest_ProducerSMBScrapingMode : int;
-enum InitializeConnectionRequest_ProducerBuildFlags : int;
 }  // namespace perfetto
 }  // namespace protos
 }  // namespace gen
@@ -58052,11 +59116,6 @@ enum InitializeConnectionRequest_ProducerSMBScrapingMode : int {
   InitializeConnectionRequest_ProducerSMBScrapingMode_SMB_SCRAPING_UNSPECIFIED = 0,
   InitializeConnectionRequest_ProducerSMBScrapingMode_SMB_SCRAPING_ENABLED = 1,
   InitializeConnectionRequest_ProducerSMBScrapingMode_SMB_SCRAPING_DISABLED = 2,
-};
-enum InitializeConnectionRequest_ProducerBuildFlags : int {
-  InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_UNSPECIFIED = 0,
-  InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_DCHECKS_ON = 1,
-  InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_DCHECKS_OFF = 2,
 };
 
 class PERFETTO_EXPORT SyncResponse : public ::protozero::CppMessageObj {
@@ -58998,18 +60057,11 @@ class PERFETTO_EXPORT InitializeConnectionRequest : public ::protozero::CppMessa
   static constexpr auto SMB_SCRAPING_DISABLED = InitializeConnectionRequest_ProducerSMBScrapingMode_SMB_SCRAPING_DISABLED;
   static constexpr auto ProducerSMBScrapingMode_MIN = InitializeConnectionRequest_ProducerSMBScrapingMode_SMB_SCRAPING_UNSPECIFIED;
   static constexpr auto ProducerSMBScrapingMode_MAX = InitializeConnectionRequest_ProducerSMBScrapingMode_SMB_SCRAPING_DISABLED;
-  using ProducerBuildFlags = InitializeConnectionRequest_ProducerBuildFlags;
-  static constexpr auto BUILD_FLAGS_UNSPECIFIED = InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_UNSPECIFIED;
-  static constexpr auto BUILD_FLAGS_DCHECKS_ON = InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_DCHECKS_ON;
-  static constexpr auto BUILD_FLAGS_DCHECKS_OFF = InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_DCHECKS_OFF;
-  static constexpr auto ProducerBuildFlags_MIN = InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_UNSPECIFIED;
-  static constexpr auto ProducerBuildFlags_MAX = InitializeConnectionRequest_ProducerBuildFlags_BUILD_FLAGS_DCHECKS_OFF;
   enum FieldNumbers {
     kSharedMemoryPageSizeHintBytesFieldNumber = 1,
     kSharedMemorySizeHintBytesFieldNumber = 2,
     kProducerNameFieldNumber = 3,
     kSmbScrapingModeFieldNumber = 4,
-    kBuildFlagsFieldNumber = 5,
     kProducerProvidedShmemFieldNumber = 6,
     kSdkVersionFieldNumber = 8,
     kShmKeyWindowsFieldNumber = 7,
@@ -59045,10 +60097,6 @@ class PERFETTO_EXPORT InitializeConnectionRequest : public ::protozero::CppMessa
   InitializeConnectionRequest_ProducerSMBScrapingMode smb_scraping_mode() const { return smb_scraping_mode_; }
   void set_smb_scraping_mode(InitializeConnectionRequest_ProducerSMBScrapingMode value) { smb_scraping_mode_ = value; _has_field_.set(4); }
 
-  bool has_build_flags() const { return _has_field_[5]; }
-  InitializeConnectionRequest_ProducerBuildFlags build_flags() const { return build_flags_; }
-  void set_build_flags(InitializeConnectionRequest_ProducerBuildFlags value) { build_flags_ = value; _has_field_.set(5); }
-
   bool has_producer_provided_shmem() const { return _has_field_[6]; }
   bool producer_provided_shmem() const { return producer_provided_shmem_; }
   void set_producer_provided_shmem(bool value) { producer_provided_shmem_ = value; _has_field_.set(6); }
@@ -59066,7 +60114,6 @@ class PERFETTO_EXPORT InitializeConnectionRequest : public ::protozero::CppMessa
   uint32_t shared_memory_size_hint_bytes_{};
   std::string producer_name_{};
   InitializeConnectionRequest_ProducerSMBScrapingMode smb_scraping_mode_{};
-  InitializeConnectionRequest_ProducerBuildFlags build_flags_{};
   bool producer_provided_shmem_{};
   std::string sdk_version_{};
   std::string shm_key_windows_{};
@@ -60582,7 +61629,6 @@ bool InitializeConnectionRequest::operator==(const InitializeConnectionRequest& 
    && shared_memory_size_hint_bytes_ == other.shared_memory_size_hint_bytes_
    && producer_name_ == other.producer_name_
    && smb_scraping_mode_ == other.smb_scraping_mode_
-   && build_flags_ == other.build_flags_
    && producer_provided_shmem_ == other.producer_provided_shmem_
    && sdk_version_ == other.sdk_version_
    && shm_key_windows_ == other.shm_key_windows_;
@@ -60609,9 +61655,6 @@ bool InitializeConnectionRequest::ParseFromArray(const void* raw, size_t size) {
         break;
       case 4 /* smb_scraping_mode */:
         field.get(&smb_scraping_mode_);
-        break;
-      case 5 /* build_flags */:
-        field.get(&build_flags_);
         break;
       case 6 /* producer_provided_shmem */:
         field.get(&producer_provided_shmem_);
@@ -60661,11 +61704,6 @@ void InitializeConnectionRequest::Serialize(::protozero::Message* msg) const {
   // Field 4: smb_scraping_mode
   if (_has_field_[4]) {
     msg->AppendVarInt(4, smb_scraping_mode_);
-  }
-
-  // Field 5: build_flags
-  if (_has_field_[5]) {
-    msg->AppendVarInt(5, build_flags_);
   }
 
   // Field 6: producer_provided_shmem
@@ -64915,6 +65953,7 @@ class HostImpl : public Host, public base::UnixSocket::EventListener {
 #include <utility>
 
 // gen_amalgamated expanded: #include "perfetto/base/task_runner.h"
+// gen_amalgamated expanded: #include "perfetto/ext/base/crash_keys.h"
 // gen_amalgamated expanded: #include "perfetto/ext/base/utils.h"
 // gen_amalgamated expanded: #include "perfetto/ext/ipc/service.h"
 // gen_amalgamated expanded: #include "perfetto/ext/ipc/service_descriptor.h"
@@ -64930,6 +65969,8 @@ namespace {
 
 constexpr base::SockFamily kHostSockFamily =
     kUseTCPSocket ? base::SockFamily::kInet : base::SockFamily::kUnix;
+
+base::CrashKey g_crash_key_uid("ipc_uid");
 
 uid_t GetPosixPeerUid(base::UnixSocket* sock) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
@@ -65016,6 +66057,9 @@ void HostImpl::OnDataAvailable(base::UnixSocket* sock) {
     return;
   ClientConnection* client = it->second;
   BufferedFrameDeserializer& frame_deserializer = client->frame_deserializer;
+
+  auto peer_uid = GetPosixPeerUid(client->sock.get());
+  auto scoped_key = g_crash_key_uid.SetScoped(static_cast<int64_t>(peer_uid));
 
   size_t rsize;
   do {
@@ -65111,8 +66155,9 @@ void HostImpl::OnInvokeMethod(ClientConnection* client,
     });
   }
 
-  service->client_info_ =
-      ClientInfo(client->id, GetPosixPeerUid(client->sock.get()));
+  auto peer_uid = GetPosixPeerUid(client->sock.get());
+  auto scoped_key = g_crash_key_uid.SetScoped(static_cast<int64_t>(peer_uid));
+  service->client_info_ = ClientInfo(client->id, peer_uid);
   service->received_fd_ = &client->received_fd;
   method.invoker(service, *decoded_req_args, std::move(deferred_reply));
   service->received_fd_ = nullptr;
@@ -65145,6 +66190,9 @@ void HostImpl::ReplyToMethodInvocation(ClientID client_id,
 
 // static
 void HostImpl::SendFrame(ClientConnection* client, const Frame& frame, int fd) {
+  auto peer_uid = GetPosixPeerUid(client->sock.get());
+  auto scoped_key = g_crash_key_uid.SetScoped(static_cast<int64_t>(peer_uid));
+
   std::string buf = BufferedFrameDeserializer::Serialize(frame);
 
   // When a new Client connects in OnNewClientConnection we set a timeout on
@@ -67622,13 +68670,6 @@ void ProducerIPCClientImpl::OnConnect() {
 #endif
   }
 
-#if PERFETTO_DCHECK_IS_ON()
-  req.set_build_flags(
-      protos::gen::InitializeConnectionRequest::BUILD_FLAGS_DCHECKS_ON);
-#else
-  req.set_build_flags(
-      protos::gen::InitializeConnectionRequest::BUILD_FLAGS_DCHECKS_OFF);
-#endif
   req.set_sdk_version(base::GetVersionString());
   producer_port_.InitializeConnection(req, std::move(on_init), shm_fd);
 
@@ -68818,17 +69859,6 @@ void ProducerIPCService::InitializeConnection(
       smb_scraping_mode = TracingService::ProducerSMBScrapingMode::kEnabled;
       break;
   }
-
-#if PERFETTO_DCHECK_IS_ON()
-  if (req.build_flags() ==
-      protos::gen::InitializeConnectionRequest::BUILD_FLAGS_DCHECKS_OFF) {
-    PERFETTO_LOG(
-        "The producer is built with NDEBUG but the service binary was built "
-        "with the DEBUG flag. This will likely cause crashes.");
-    // The other way round (DEBUG producer with NDEBUG service) is expected to
-    // work.
-  }
-#endif
 
   // If the producer provided an SMB, tell the service to attempt to adopt it.
   std::unique_ptr<SharedMemory> shmem;
